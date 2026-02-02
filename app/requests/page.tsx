@@ -11,6 +11,7 @@ type RequestRow = {
     customer_name: string | null;
     services_requested: string[] | null;
     overall_status: string;
+    job_deadline: string | null;
 };
 
 
@@ -29,11 +30,15 @@ export default async function RequestsPage({
         redirect("/login");
     }
     const sp = await searchParams;
-    const { status, late } = sp ?? {};
+    const { status: rawStatus, late } = sp ?? {};
+
+    const normalizedStatus = (rawStatus ?? "").trim().replace(/:$/, "");
+    const allowedStatuses = new Set(["In Progress", "Completed"]);
+    const status = allowedStatuses.has(normalizedStatus) ? normalizedStatus : undefined;
 
     let query = supabase
         .from("requests")
-        .select("id, created_at, customer_name, services_requested, overall_status")
+        .select("id, created_at, customer_name, services_requested, overall_status, job_deadline")
         .order("created_at", { ascending: false })
         .limit(10);
 
@@ -41,16 +46,20 @@ export default async function RequestsPage({
         query = query.eq("overall_status", status);
     }
 
+    if (late) {
+        const nowIso = new Date().toISOString();
+        query = query
+            .not("job_deadline", "is", null)
+            .lt("job_deadline", nowIso)
+            .neq("overall_status", "Completed");
+    }
+
     const { data, error } = await query.returns<RequestRow[]>();
-    const listTitle = late
-        ? "Late Jobs"
-        : status
-            ? `${status} Requests`
-            : "Requests";
+    const listTitle = late ? "Late Jobs" : status ?? "Requests";
 
     return (
         <AppShell title="Requests" hideHeaderTitle>
-            <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-6 shadow-sm">
+            <div>
                 {/* keep logout, but make it a simple top-right action */}
                 {user && (
                     <div className="mb-4 flex justify-end">
@@ -78,7 +87,11 @@ export default async function RequestsPage({
                 {data && data.length === 0 && (
                     <ul className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950">
                         <li className="p-6 text-sm text-neutral-400 text-center">
-                            No requests yet.
+                            {late
+                                ? "No late jobs right now."
+                                : status
+                                    ? `No ${status.toLowerCase()} requests right now.`
+                                    : "No requests yet."}
                         </li>
                     </ul>
                 )}
@@ -121,6 +134,16 @@ export default async function RequestsPage({
                                                 })}
                                             </p>
 
+                                            {req.job_deadline && (
+                                                <p className="mt-1 text-xs text-neutral-500">
+                                                    Due{" "}
+                                                    {new Date(req.job_deadline).toLocaleString(undefined, {
+                                                        dateStyle: "medium",
+                                                        timeStyle: "short",
+                                                    })}
+                                                </p>
+                                            )}
+
 
                                         </div>
 
@@ -128,12 +151,7 @@ export default async function RequestsPage({
                                         <div className="flex items-center gap-3">
                                             <span
                                                 title={`Status: ${req.overall_status}`}
-                                                className={
-                                                    "inline-flex shrink-0 items-center justify-center text-xs leading-none rounded-full px-2 py-1 border " +
-                                                    (req.overall_status === "New"
-                                                        ? "bg-blue-600/20 text-blue-200 border-blue-600/30"
-                                                        : "bg-neutral-800 text-neutral-300 border-neutral-700")
-                                                }
+                                                className="inline-flex shrink-0 items-center justify-center text-xs leading-none rounded-full px-2 py-1 border bg-neutral-800 text-neutral-300 border-neutral-700"
                                             >
                                                 {req.overall_status}
                                             </span>
