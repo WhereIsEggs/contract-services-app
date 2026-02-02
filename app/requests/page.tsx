@@ -1,8 +1,8 @@
 import { createClient } from "../lib/supabase/server";
-import { createRequest } from "../actions";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import AppShell from "../components/AppShell";
+import Link from "next/link";
+
 
 
 type RequestRow = {
@@ -14,7 +14,11 @@ type RequestRow = {
 };
 
 
-export default async function Home() {
+export default async function RequestsPage({
+    searchParams,
+}: {
+    searchParams?: Promise<{ status?: string; late?: string }>;
+}) {
     const supabase = await createClient();
 
     const {
@@ -24,135 +28,47 @@ export default async function Home() {
     if (!user) {
         redirect("/login");
     }
+    const sp = await searchParams;
+    const { status, late } = sp ?? {};
 
-
-    const { data, error } = await supabase
+    let query = supabase
         .from("requests")
         .select("id, created_at, customer_name, services_requested, overall_status")
         .order("created_at", { ascending: false })
-        .limit(10)
-        .returns<RequestRow[]>();
+        .limit(10);
+
+    if (status) {
+        query = query.eq("overall_status", status);
+    }
+
+    const { data, error } = await query.returns<RequestRow[]>();
+    const listTitle = late
+        ? "Late Jobs"
+        : status
+            ? `${status} Requests`
+            : "Requests";
 
     return (
-        <AppShell title="Requests">
-            <div className="bg-neutral-900 rounded-lg shadow-lg p-6">
-                <h1 className="text-3xl font-bold">Contract Services Tracking</h1>
-
+        <AppShell title="Requests" hideHeaderTitle>
+            <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-6 shadow-sm">
+                {/* keep logout, but make it a simple top-right action */}
                 {user && (
-                    <form method="POST" action="/auth/logout" className="mt-4 mb-6">
-                        <button
-                            type="submit"
-                            className="text-sm text-neutral-300 hover:text-white underline"
-                        >
-                            Log out
-                        </button>
-                    </form>
+                    <div className="mb-4 flex justify-end">
+                        <form method="POST" action="/auth/logout">
+                            <button
+                                type="submit"
+                                className="text-sm text-neutral-300 hover:text-white underline"
+                            >
+                                Log out
+                            </button>
+                        </form>
+                    </div>
                 )}
-
-                <hr className="my-8 border-neutral-800" />
-
-
-                <form
-                    id="new"
-                    action={async (formData) => {
-                        "use server";
-                        await createRequest(formData);
-                    }}
-                    className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900/60 p-6 shadow-sm grid gap-5"
-                >
-                    <div className="flex flex-col gap-1">
-                        <h2 className="text-lg font-semibold text-neutral-100">
-                            New Service Request
-                        </h2>
-                        <p className="text-sm text-neutral-400">
-                            Submit a new contract services request for tracking and assignment.
-                        </p>
-                    </div>
-
-                    <div className="grid gap-1">
-                        <label className="w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        >
-                            Customer Name
-                        </label>
-                        <input
-                            name="customer_name"
-                            placeholder="Acme Corp"
-                            className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                    </div>
-
-                    <fieldset className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-4"
-                    >
-                        <legend className="px-1 text-sm font-medium text-neutral-200">
-                            Services Requested
-                        </legend>
-
-                        <div className="mt-3 grid gap-2">
-                            <label className="flex items-center gap-2 text-sm text-neutral-200 hover:text-white transition-colors"
-                            >
-                                <input
-                                    type="checkbox"
-                                    name="svc_scan"
-                                    className="h-4 w-4 rounded border-neutral-600 bg-neutral-950"
-                                />
-                                3D Scanning
-                            </label>
-
-                            <label className="flex items-center gap-2 text-sm text-neutral-200 hover:text-white transition-colors"
-                            >
-                                <input
-                                    type="checkbox"
-                                    name="svc_design"
-                                    className="h-4 w-4 rounded border-neutral-600 bg-neutral-950"
-                                />
-                                3D Design
-                            </label>
-
-                            <label className="flex items-center gap-2 text-sm text-neutral-200 hover:text-white transition-colors"
-                            >
-                                <input
-                                    type="checkbox"
-                                    name="svc_print"
-                                    className="h-4 w-4 rounded border-neutral-600 bg-neutral-950"
-                                />
-                                Contract Print
-                            </label>
-                        </div>
-                    </fieldset>
-
-
-                    <div className="grid gap-1">
-                        <label className="text-sm font-medium text-neutral-200">
-                            Project Details
-                        </label>
-                        <textarea
-                            name="project_details"
-                            placeholder="Customer needs a part scanned, cleaned up in CAD, then printed..."
-                            rows={5}
-                            className="w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        />
-                    </div>
-
-
-                    <button
-                        type="submit"
-                        className="mt-4 inline-flex items-center justify-center rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-neutral-900 transition"
-                    >
-                        Submit Request
-                    </button>
-                </form>
-
-                <hr className="my-8 border-neutral-800" />
-                <section className="mt-8 rounded-xl border border-neutral-800 bg-neutral-900/60 p-6 shadow-sm">
-
-                    <h2 className="mb-4 text-lg font-semibold text-neutral-100"
-                    >
-                        Latest Requests
+                <div className="mb-6">
+                    <h2 className="text-2xl font-semibold text-neutral-100">
+                        {listTitle}
                     </h2>
-                </section>
-
-
-
+                </div>
                 {error && (
                     <p className="text-sm text-red-400">
                         Error loading requests.

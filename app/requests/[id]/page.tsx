@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/app/lib/supabase/server";
 import { notFound } from "next/navigation";
+import AppShell from "@/app/components/AppShell";
 
 
 
@@ -28,21 +29,10 @@ export default async function RequestDetailPage({
     }
 
     return (
-
-
-
-        <main className="p-6 max-w-[900px] mx-auto">
-            <div className="bg-neutral-900 rounded-lg shadow-lg p-6">
-                <Link
-                    href="/"
-                    className="text-sm text-blue-400 hover:text-blue-300 underline"
-                >
-                    ← Back to Requests
-                </Link>
-
-                <h1 className="mt-4 text-2xl font-bold">Request Details</h1>
-
-                {request && (
+        <AppShell title="Request Details">
+            <main className="p-6 max-w-[900px] mx-auto">
+                <div className="bg-neutral-900 rounded-lg shadow-lg p-6">
+                    <h1 className="mt-4 text-2xl font-bold">Request Details</h1>
                     <div className="mt-6 grid gap-4 text-sm text-neutral-200">
                         <div>
                             <span className="text-neutral-400">Customer</span>
@@ -53,9 +43,7 @@ export default async function RequestDetailPage({
 
                         <div>
                             <span className="text-neutral-400">Requested Services</span>
-                            <div>
-                                {(request.services_requested ?? []).join(", ") || "—"}
-                            </div>
+                            <div>{(request.services_requested ?? []).join(", ") || "—"}</div>
                         </div>
 
                         <div>
@@ -80,8 +68,8 @@ export default async function RequestDetailPage({
                             </div>
                         </div>
                     </div>
-                )}
-            </div>
-        </main>
+                </div>
+            </main>
+        </AppShell>
     );
 }
