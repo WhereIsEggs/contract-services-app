@@ -46,6 +46,12 @@ export default async function RequestsPage({
         query = query.eq("overall_status", status);
     }
 
+    // If no explicit status filter is set, treat /requests as the "New Requests" intake queue
+    if (!status && !late) {
+        query = query.eq("overall_status", "New");
+    }
+
+
     if (late) {
         const nowIso = new Date().toISOString();
         query = query
@@ -59,24 +65,13 @@ export default async function RequestsPage({
 
     return (
         <AppShell title="Requests" hideHeaderTitle>
-            <div>
-                {/* keep logout, but make it a simple top-right action */}
-                {user && (
-                    <div className="mb-4 flex justify-end">
-                        <form method="POST" action="/auth/logout">
-                            <button
-                                type="submit"
-                                className="text-sm text-neutral-300 hover:text-white underline"
-                            >
-                                Log out
-                            </button>
-                        </form>
-                    </div>
-                )}
+            <div className="bg-neutral-900 rounded-lg shadow-lg p-6">
                 <div className="mb-6">
                     <h2 className="text-2xl font-semibold text-neutral-100">
                         {listTitle}
                     </h2>
+
+                    <div className="mt-4 border-b border-neutral-800" />
                 </div>
                 {error && (
                     <p className="text-sm text-red-400">
@@ -102,7 +97,7 @@ export default async function RequestsPage({
                         {data.map((req: RequestRow) => (
                             <li
                                 key={req.id}
-                                className="group relative p-4 transition-colors hover:bg-neutral-800/50 active:bg-neutral-800 focus-within:outline focus-within:outline-2 focus-within:outline-blue-500 rounded-lg focus-within:z-10 focus-within:bg-neutral-900/60"
+                                className="group relative p-4 rounded-lg border border-neutral-800 bg-neutral-950/40 transition-colors hover:bg-neutral-900/60 active:bg-neutral-900 focus-within:outline focus-within:outline-2 focus-within:outline-blue-500 focus-within:z-10"
                             >
                                 <Link
                                     href={`/requests/${req.id}`}

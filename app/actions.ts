@@ -14,33 +14,171 @@ function readServices(formData: FormData) {
 export async function createRequest(formData: FormData) {
   const supabase = await createClient();
   const {
-      data: { user },
+    data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) throw new Error("Not authenticated");
 
-    const customer_name = String(formData.get("customer_name") ?? "").trim();
-    const project_details = String(formData.get("project_details") ?? "").trim();
-    const services_requested = readServices(formData);
+  const customer_name = String(formData.get("customer_name") ?? "").trim();
+  const project_details = String(formData.get("project_details") ?? "").trim();
+  const services_requested = readServices(formData);
 
-    if (!customer_name) throw new Error("Customer Name is required.");
-    if (services_requested.length === 0) throw new Error("Select at least one service.");
-    if (!project_details) throw new Error("Project Details are required.");
+  if (!customer_name) throw new Error("Customer Name is required.");
+  if (services_requested.length === 0) throw new Error("Select at least one service.");
+  if (!project_details) throw new Error("Project Details are required.");
 
-    const { error } = await supabase.from("requests").insert([
-    {
-      customer_name,
-      project_details,
-      services_requested,
-      // leave initial_poc blank for now; we’ll fill it from auth later
-      overall_status: "New",
-      scan_status: services_requested.includes("3D Scanning") ? "Not Started" : "Not Started",
-      design_status: services_requested.includes("3D Design") ? "Not Started" : "Not Started",
-      print_status: services_requested.includes("Contract Print") ? "Not Started" : "Not Started",
-    },
-  ]);
+  // 1) Create the parent request and get its id back
+  const { data: newRequest, error: reqError } = await supabase
+    .from("requests")
+    .insert([
+      {
+        customer_name,
+        project_details,
+        services_requested,
+        overall_status: "New",
+        // legacy per-service columns stay in schema for now, but are not the source of truth
+        scan_status: "Not Started",
+        design_status: "Not Started",
+        print_status: "Not Started",
+      },
+    ])
+    .select("id")
+    .single();
 
-  if (error) throw new Error(JSON.stringify(error));
+  if (reqError || !newRequest) throw new Error(JSON.stringify(reqError));
 
-  revalidatePath("/");
+  // 2) Create one service-step row per selected service
+  const sortOrder: Record<string, number> = {
+    "3D Scanning": 10,
+    "3D Design": 20,
+    "Contract Print": 30,
+  };
+
+  const serviceRows = services_requested.map((service_type) => ({
+    request_id: newRequest.id,
+    service_type,
+    step_status: "Not Started",
+    sort_order: sortOrder[service_type] ?? 0,
+  }));
+
+  const { error: svcError } = await supabase
+    .from("request_services")
+    .insert(serviceRows);
+
+  if (svcError) throw new Error(JSON.stringify(svcError));
+
+  revalidatePath("/requests");
+  revalidatePath("/dashboard");
 }
+
+// ✅ THIS must exist and close createRequest
+
+
+// ✅ now a new export can safely start
+export async function updateServiceStepStatus(
+  serviceId: string,
+  step_status: string,
+  notes?: string
+) {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) throw new Error("Not authenticated");
+
+  const allowed = new Set(["Not Started", "In Progress", "Completed", "Waiting"]);
+  if (!allowed.has(step_status)) throw new Error("Invalid step status");
+
+  // 0) Get the parent request_id FIRST (reliable)
+  const { data: svcRow, error: svcRowError } = await supabase
+    .from("request_services")
+    .select("request_id, service_type")
+    .eq("id", serviceId)
+    .single();
+
+  if (svcRowError || !svcRow?.request_id) throw new Error(JSON.stringify(svcRowError));
+
+  // 1) Guard: only ONE step can be In Progress at a time for a given request
+  if (step_status === "In Progress") {
+    const { data: existingActive, error: activeError } = await supabase
+      .from("request_services")
+      .select("id")
+      .eq("request_id", svcRow.request_id)
+      .eq("step_status", "In Progress")
+      .neq("id", serviceId)
+      .limit(1);
+
+    if (activeError) throw new Error(JSON.stringify(activeError));
+
+    if (existingActive && existingActive.length > 0) {
+      throw new Error("Another service step is already in progress for this request.");
+    }
+  }
+
+
+  // 2) Update the selected service step
+  const updatePayload: any = { step_status };
+
+  if (typeof notes === "string" && notes.trim().length > 0) {
+    updatePayload.notes = notes.trim();
+  }
+
+  if (step_status === "In Progress") {
+    updatePayload.started_at = new Date().toISOString();
+    updatePayload.completed_at = null;
+  }
+
+  if (step_status === "Completed") {
+    updatePayload.completed_at = new Date().toISOString();
+  }
+
+  const { error: stepError } = await supabase
+    .from("request_services")
+    .update(updatePayload)
+    .eq("id", serviceId);
+
+  if (stepError) throw new Error(JSON.stringify(stepError));
+
+  // 3) If moved to In Progress, set overall_status to reflect the active service
+  if (step_status === "In Progress") {
+    const { error: reqError } = await supabase
+      .from("requests")
+      .update({ overall_status: "In Progress" })
+      .eq("id", svcRow.request_id);
+
+    if (reqError) throw new Error(JSON.stringify(reqError));
+  }
+
+  // 3b) If this step was set to Completed, and ALL steps for the request are Completed,
+  // then set the parent request to Completed.
+  if (step_status === "Completed") {
+    const { data: allSteps, error: stepsError } = await supabase
+      .from("request_services")
+      .select("step_status")
+      .eq("request_id", svcRow.request_id);
+
+    if (stepsError) throw new Error(JSON.stringify(stepsError));
+
+    const allCompleted =
+      (allSteps ?? []).length > 0 &&
+      (allSteps ?? []).every((s: any) => s.step_status === "Completed");
+
+    if (allCompleted) {
+      const { error: reqDoneError } = await supabase
+        .from("requests")
+        .update({ overall_status: "Completed" })
+        .eq("id", svcRow.request_id);
+
+      if (reqDoneError) throw new Error(JSON.stringify(reqDoneError));
+    }
+  }
+
+
+  // 4) Refresh pages that display request/service data
+  revalidatePath("/requests");
+  revalidatePath("/dashboard");
+  revalidatePath(`/requests/${svcRow.request_id}`);
+}
+

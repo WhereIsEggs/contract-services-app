@@ -18,8 +18,13 @@ export default async function DashboardPage() {
 
     const lateJobsCount = 0; // placeholder for now
     return (
-        <AppShell title="Dashboard">
+        <AppShell title="Dashboard" hideHeaderTitle>
             <div className="grid gap-6">
+                <div className="mb-6">
+                    <h2 className="text-2xl font-semibold text-neutral-100">Dashboard</h2>
+                    <div className="mt-4 border-b border-neutral-800" />
+                </div>
+
                 <section>
                     <div className="grid gap-4 sm:grid-cols-3">
                         <Link
