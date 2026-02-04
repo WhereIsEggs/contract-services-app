@@ -88,7 +88,7 @@ export async function updateServiceStepStatus(
 
   if (!user) throw new Error("Not authenticated");
 
-  const allowed = new Set(["Not Started", "In Progress", "Completed", "Waiting"]);
+  const allowed = new Set(["Not Started", "In Progress", "Completed"]);
   if (!allowed.has(step_status)) throw new Error("Invalid step status");
 
   // 0) Get the parent request_id FIRST (reliable)
@@ -99,6 +99,33 @@ export async function updateServiceStepStatus(
     .single();
 
   if (svcRowError || !svcRow?.request_id) throw new Error(JSON.stringify(svcRowError));
+
+  // 1) Normalize: if bad data exists (multiple steps In Progress), keep one and set the rest to Waiting
+  {
+    const { data: activeSteps, error: activeStepsError } = await supabase
+      .from("request_services")
+      .select("id, started_at, sort_order")
+      .eq("request_id", svcRow.request_id)
+      .eq("step_status", "In Progress")
+      // keep the earliest started; if no timestamps, fall back to sort_order
+      .order("started_at", { ascending: true, nullsFirst: false })
+      .order("sort_order", { ascending: true });
+
+    if (activeStepsError) throw new Error(JSON.stringify(activeStepsError));
+
+    if ((activeSteps ?? []).length > 1) {
+      const keepId = activeSteps![0].id;
+      const otherIds = activeSteps!.slice(1).map((s) => s.id);
+
+      const { error: normalizeError } = await supabase
+        .from("request_services")
+        .update({ step_status: "Waiting" })
+        .in("id", otherIds);
+
+      if (normalizeError) throw new Error(JSON.stringify(normalizeError));
+    }
+  }
+
 
   // 1) Guard: only ONE step can be In Progress at a time for a given request
   if (step_status === "In Progress") {
@@ -112,17 +139,32 @@ export async function updateServiceStepStatus(
 
     if (activeError) throw new Error(JSON.stringify(activeError));
 
-    if (existingActive && existingActive.length > 0) {
+    if ((existingActive ?? []).length > 0) {
       throw new Error("Another service step is already in progress for this request.");
     }
   }
 
 
+
   // 2) Update the selected service step
   const updatePayload: any = { step_status };
 
+  const { data: existingNotesRow } = await supabase
+    .from("request_services")
+    .select("notes")
+    .eq("id", serviceId)
+    .single();
+
+  updatePayload.notes = existingNotesRow?.notes ?? "";
+
+
   if (typeof notes === "string" && notes.trim().length > 0) {
-    updatePayload.notes = notes.trim();
+    const timestamp = new Date().toLocaleString();
+    const entry = `[${timestamp}] ${notes.trim()}`;
+
+    updatePayload.notes = updatePayload.notes
+      ? `${updatePayload.notes}\n\n${entry}`
+      : entry;
   }
 
   if (step_status === "In Progress") {
@@ -181,4 +223,5 @@ export async function updateServiceStepStatus(
   revalidatePath("/dashboard");
   revalidatePath(`/requests/${svcRow.request_id}`);
 }
+
 

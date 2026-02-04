@@ -53,7 +53,8 @@ export default async function RequestDetailPage({
         .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
 
     const activeStep = steps.find((s: any) => s.step_status === "In Progress") ?? null;
-    const firstNotStarted = steps.find((s: any) => s.step_status === "Not Started") ?? null;
+    const firstNotStarted =
+        steps.find((s: any) => s.step_status === "Not Started" || s.step_status === "Waiting") ?? null;
 
     return (
         <AppShell title="Request Details" hideHeaderTitle>
@@ -83,53 +84,29 @@ export default async function RequestDetailPage({
                                     {/* Workflow buttons */}
                                     {activeStep ? (
                                         <>
-                                            <>
-                                                <form
-                                                    action={async () => {
-                                                        "use server";
-                                                        await updateServiceStepStatus(activeStep.id, "Completed");
-                                                    }}
+                                            <form
+                                                action={async () => {
+                                                    "use server";
+                                                    await updateServiceStepStatus(activeStep.id, "Completed");
+                                                }}
+                                            >
+                                                <button
+                                                    type="submit"
+                                                    className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-neutral-900 transition"
                                                 >
-                                                    <button
-                                                        type="submit"
-                                                        className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-neutral-900 transition"
-                                                    >
-                                                        Complete {activeStep.service_type}
-                                                    </button>
-                                                </form>
+                                                    Complete {activeStep.service_type}
+                                                </button>
+                                            </form>
 
-                                                <ProgressUpdateToggle
-                                                    initialNotes={activeStep.notes ?? null}
-                                                    action={async (formData) => {
-                                                        "use server";
-                                                        const notes = String(formData.get("notes") ?? "");
-                                                        await updateServiceStepStatus(activeStep.id, "In Progress", notes);
-                                                    }}
-                                                />
-                                            </>
-
-                                            {/*                                             <form
+                                            <ProgressUpdateToggle
+                                                initialNotes={activeStep.notes ?? null}
                                                 action={async (formData) => {
                                                     "use server";
                                                     const notes = String(formData.get("notes") ?? "");
-                                                    await updateServiceStepStatus(activeStep.id, "Waiting", notes);
+                                                    await updateServiceStepStatus(activeStep.id, "In Progress", notes);
                                                 }}
-                                                className="grid gap-2"
-                                            >
-                                                <textarea
-                                                    name="notes"
-                                                    placeholder="Reason for waiting…"
-                                                    className="w-full rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                                                    rows={3}
-                                                />
-                                                <button
-                                                    type="submit"
-                                                    className="inline-flex items-center justify-center rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-neutral-900 transition"
-                                                >
-                                                    Block {activeStep.service_type}
-                                                </button>
-                                            </form>
- */}                                        </>
+                                            />
+                                        </>
                                     ) : firstNotStarted ? (
                                         <form
                                             action={async () => {
@@ -146,13 +123,13 @@ export default async function RequestDetailPage({
                                         </form>
                                     ) : null}
 
-                                    {/* Steps list */}
                                     <ul className="grid gap-2">
                                         {steps.map((svc: any) => (
                                             <li
                                                 key={svc.id}
-                                                className="flex items-center justify-between rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-2"
+                                                className="grid grid-cols-[1fr_auto] gap-x-3 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-2"
                                             >
+                                                {/* Left column: service + timestamps */}
                                                 <div className="flex flex-col">
                                                     <span className="text-neutral-100">{svc.service_type}</span>
 
@@ -165,13 +142,21 @@ export default async function RequestDetailPage({
                                                     ) : null}
                                                 </div>
 
+                                                {/* Right column: status pill (top-right) */}
                                                 {svc.step_status !== "In Progress" ? (
-                                                    <span className="text-xs rounded-full border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-300">
+                                                    <span className="col-start-2 row-start-1 self-start justify-self-end text-xs rounded-full border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-300">
                                                         {svc.step_status}
                                                     </span>
                                                 ) : (
-                                                    <span className="text-xs text-neutral-500"></span>
+                                                    <span className="col-start-2 row-start-1 self-start justify-self-end text-xs text-neutral-500"></span>
                                                 )}
+
+                                                {/* Full-width notes (only when NOT active) */}
+                                                {svc.step_status !== "In Progress" && svc.notes ? (
+                                                    <div className="col-span-2 mt-2 rounded-md border border-neutral-800 bg-neutral-950/30 px-3 py-2 text-xs text-neutral-300 whitespace-pre-wrap">
+                                                        {svc.notes}
+                                                    </div>
+                                                ) : null}
                                             </li>
                                         ))}
                                     </ul>
@@ -183,7 +168,13 @@ export default async function RequestDetailPage({
 
                         <div>
                             <span className="text-neutral-400">Status</span>
-                            <div>{activeStep ? `${activeStep.service_type} In Progress` : request.overall_status}</div>
+                            <div>
+                                {activeStep
+                                    ? `${activeStep.service_type} In Progress`
+                                    : firstNotStarted
+                                        ? `Waiting to Start ${firstNotStarted.service_type}`
+                                        : request.overall_status}
+                            </div>
                         </div>
 
                         <div>
@@ -203,6 +194,6 @@ export default async function RequestDetailPage({
                     </div>
                 </div>
             </div>
-        </AppShell>
+        </AppShell >
     );
 }

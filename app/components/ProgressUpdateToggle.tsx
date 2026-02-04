@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 export default function ProgressUpdateToggle({
@@ -10,6 +11,7 @@ export default function ProgressUpdateToggle({
     action: (formData: FormData) => void;
 }) {
     const [isEditing, setIsEditing] = useState(false);
+    const router = useRouter();
     const hasNotes = Boolean(initialNotes && initialNotes.trim().length > 0);
 
     return (
@@ -32,16 +34,23 @@ export default function ProgressUpdateToggle({
                     onClick={() => setIsEditing(true)}
                     className="inline-flex items-center justify-center rounded-md border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-100 hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-neutral-900 transition"
                 >
-                    {hasNotes ? "Edit Progress Update" : "Add Progress Update"}
+                    Add Progress Update
                 </button>
             ) : null}
 
             {/* Editor (ONLY when editing) */}
             {isEditing ? (
-                <form action={action} className="grid gap-2">
+                <form
+                    action={async (formData) => {
+                        await action(formData);
+                        router.refresh();      // <- pulls fresh server data (initialNotes)
+                        setIsEditing(false);
+                    }}
+                    className="grid gap-2"
+                >
                     <textarea
                         name="notes"
-                        defaultValue={initialNotes ?? ""}
+                        defaultValue=""
                         placeholder="Add a progress update for the team…"
                         className="w-full rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         rows={3}
