@@ -38,7 +38,18 @@ export default async function RequestsPage({
 
     let query = supabase
         .from("requests")
-        .select("id, created_at, customer_name, services_requested, overall_status, job_deadline")
+        .select(`
+  id,
+  created_at,
+  customer_name,
+  services_requested,
+  overall_status,
+  request_services (
+    service_type,
+    step_status,
+    sort_order
+  )
+`)
         .order("created_at", { ascending: false })
         .limit(10);
 
@@ -148,7 +159,18 @@ export default async function RequestsPage({
                                                 title={`Status: ${req.overall_status}`}
                                                 className="inline-flex shrink-0 items-center justify-center text-xs leading-none rounded-full px-2 py-1 border bg-neutral-800 text-neutral-300 border-neutral-700"
                                             >
-                                                {req.overall_status}
+                                                {(() => {
+                                                    const steps = Array.isArray((req as any).request_services)
+                                                        ? ((req as any).request_services as any[]).slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+                                                        : [];
+
+                                                    const active = steps.find((s) => s.step_status === "In Progress");
+                                                    const next = steps.find((s) => s.step_status === "Not Started" || s.step_status === "Waiting");
+
+                                                    if (active) return `${active.service_type} In Progress`;
+                                                    if (req.overall_status === "In Progress" && next) return `Waiting to Start ${next.service_type}`;
+                                                    return req.overall_status;
+                                                })()}
                                             </span>
 
                                             <span className="text-neutral-600 text-sm opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0.5 group-focus-within:opacity-100 group-focus-within:translate-x-0.5">

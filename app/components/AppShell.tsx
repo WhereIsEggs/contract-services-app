@@ -17,6 +17,7 @@ export default function AppShell({
     const searchParams = useSearchParams();
     const onDashboard = pathname === "/dashboard";
     const onNewRequest = pathname === "/requests/new";
+    const onNewQuote = pathname === "/quotes/new";
     const onInProgress = pathname === "/requests" && searchParams.get("status") === "In Progress";
     const onCompleted = pathname === "/requests" && searchParams.get("status") === "Completed";
     const onLateJobs = pathname === "/requests" && searchParams.has("late");
@@ -50,13 +51,24 @@ export default function AppShell({
                             </Link>
 
                             <Link
+                                href="/quotes/new"
+                                className={`block rounded-lg px-3 py-2 text-sm ${onNewQuote
+                                    ? "bg-neutral-900 text-white"
+                                    : "text-neutral-200 hover:bg-neutral-900 hover:text-white transition"
+                                    }`}
+                            >
+                                New Quote
+                            </Link>
+
+
+                            <Link
                                 href="/requests/new"
                                 className={`block rounded-lg px-3 py-2 text-sm ${onNewRequest
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white transition"
                                     }`}
                             >
-                                Submit New Request
+                                Submit Request
                             </Link>
 
                             <Link

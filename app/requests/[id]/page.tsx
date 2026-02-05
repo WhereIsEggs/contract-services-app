@@ -26,15 +26,16 @@ export default async function RequestDetailPage({
         services_requested,
         overall_status,
         project_details,
-        request_services (
-          id,
-          service_type,
-          step_status,
-          sort_order,
-          started_at,
-          completed_at,
-          notes
-        )
+request_services (
+  id,
+  service_type,
+  step_status,
+  sort_order,
+  started_at,
+  completed_at,
+  updated_at,
+  notes
+)
       `
         )
         .eq("id", id)
@@ -82,45 +83,43 @@ export default async function RequestDetailPage({
                             {steps.length > 0 ? (
                                 <div className="mt-2 grid gap-3">
                                     {/* Workflow buttons */}
-                                    {activeStep ? (
+                                    {request.overall_status !== "Completed" ? (
                                         <>
-                                            <form
-                                                action={async () => {
-                                                    "use server";
-                                                    await updateServiceStepStatus(activeStep.id, "Completed");
-                                                }}
-                                            >
-                                                <button
-                                                    type="submit"
-                                                    className="inline-flex items-center justify-center rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-neutral-900 transition"
-                                                >
-                                                    Complete {activeStep.service_type}
-                                                </button>
-                                            </form>
+                                            {activeStep ? (
+                                                <>
+                                                    <form
+                                                        action={async () => {
+                                                            "use server";
+                                                            await updateServiceStepStatus(activeStep.id, "Completed");
+                                                        }}
+                                                    >
+                                                        <button type="submit">
+                                                            Complete {activeStep.service_type}
+                                                        </button>
+                                                    </form>
 
-                                            <ProgressUpdateToggle
-                                                initialNotes={activeStep.notes ?? null}
-                                                action={async (formData) => {
-                                                    "use server";
-                                                    const notes = String(formData.get("notes") ?? "");
-                                                    await updateServiceStepStatus(activeStep.id, "In Progress", notes);
-                                                }}
-                                            />
+                                                    <ProgressUpdateToggle
+                                                        initialNotes={activeStep.notes ?? null}
+                                                        action={async (formData) => {
+                                                            "use server";
+                                                            const notes = String(formData.get("notes") ?? "");
+                                                            await updateServiceStepStatus(activeStep.id, "In Progress", notes);
+                                                        }}
+                                                    />
+                                                </>
+                                            ) : firstNotStarted ? (
+                                                <form
+                                                    action={async () => {
+                                                        "use server";
+                                                        await updateServiceStepStatus(firstNotStarted.id, "In Progress");
+                                                    }}
+                                                >
+                                                    <button type="submit">
+                                                        Start {firstNotStarted.service_type}
+                                                    </button>
+                                                </form>
+                                            ) : null}
                                         </>
-                                    ) : firstNotStarted ? (
-                                        <form
-                                            action={async () => {
-                                                "use server";
-                                                await updateServiceStepStatus(firstNotStarted.id, "In Progress");
-                                            }}
-                                        >
-                                            <button
-                                                type="submit"
-                                                className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-neutral-900 transition"
-                                            >
-                                                Start {firstNotStarted.service_type}
-                                            </button>
-                                        </form>
                                     ) : null}
 
                                     <ul className="grid gap-2">
@@ -133,11 +132,21 @@ export default async function RequestDetailPage({
                                                 <div className="flex flex-col">
                                                     <span className="text-neutral-100">{svc.service_type}</span>
 
-                                                    {(svc.started_at || svc.completed_at) ? (
+                                                    {(svc.started_at || svc.completed_at || svc.updated_at) ? (
                                                         <span className="mt-0.5 text-xs text-neutral-500">
                                                             {svc.started_at ? `Started: ${new Date(svc.started_at).toLocaleString()}` : ""}
                                                             {svc.started_at && svc.completed_at ? " • " : ""}
                                                             {svc.completed_at ? `Completed: ${new Date(svc.completed_at).toLocaleString()}` : ""}
+                                                            {svc.started_at && svc.completed_at ? (() => {
+                                                                const ms =
+                                                                    new Date(svc.completed_at).getTime() - new Date(svc.started_at).getTime();
+                                                                const mins = Math.max(0, Math.round(ms / 60000));
+                                                                const h = Math.floor(mins / 60);
+                                                                const m = mins % 60;
+                                                                const label = h > 0 ? `${h}h ${m}m` : `${m}m`;
+                                                                return ` • Duration: ${label}`;
+                                                            })() : ""}
+                                                            {svc.updated_at ? ` • Last updated: ${new Date(svc.updated_at).toLocaleString()}` : ""}
                                                         </span>
                                                     ) : null}
                                                 </div>
