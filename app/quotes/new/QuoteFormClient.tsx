@@ -7,10 +7,30 @@ type MaterialOption = {
     name: string;
     category: string | null;
     is_active: boolean;
+    price_per_lb: number; // <-- REQUIRED for preview
 };
+
+type CostSettings = Record<string, number>;
+
+function toNum(v: any) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+}
+
+// match your sheet/script behavior: ceil to 0.01 lb
+function gramsToPoundsCeil2dp(grams: number) {
+    if (!Number.isFinite(grams) || grams <= 0) return 0;
+    return Math.ceil(grams * 0.00220462 * 100) / 100;
+}
+
+function money(n: number) {
+    const v = Number.isFinite(n) ? n : 0;
+    return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
+}
 
 export default function QuoteFormClient({
     materials,
+    settings,
     action,
     initialSvc,
     fromRequest,
@@ -18,6 +38,7 @@ export default function QuoteFormClient({
     initialJobName,
 }: {
     materials: MaterialOption[];
+    settings: CostSettings; // <-- REQUIRED for preview
     action: (formData: FormData) => void;
     initialSvc: {
         contract_printing: boolean;
@@ -28,7 +49,6 @@ export default function QuoteFormClient({
     fromRequest: string;
     initialCustomerName?: string;
     initialJobName?: string;
-
 }) {
     const [svc, setSvc] = useState(() => initialSvc);
 
@@ -40,10 +60,6 @@ export default function QuoteFormClient({
         return Number(svc.scanning) + Number(svc.design) + Number(svc.testing);
     }, [svc.scanning, svc.design, svc.testing]);
 
-    // Row sizing rule you gave:
-    // 1 service -> full row (1 col)
-    // 2 services -> half/half (2 cols)
-    // 3 services -> leave as is (3 cols)
     const otherGridColsClass =
         otherSelectedCount <= 1
             ? "md:grid-cols-1"
@@ -51,12 +67,143 @@ export default function QuoteFormClient({
                 ? "md:grid-cols-2"
                 : "md:grid-cols-3";
 
+    // =========================
+    // Local state for live preview
+    // =========================
+    const [printTimeHours, setPrintTimeHours] = useState(0);
+
+    const [material1Id, setMaterial1Id] = useState("");
+    const [material1Grams, setMaterial1Grams] = useState(0);
+
+    const [material2Id, setMaterial2Id] = useState("");
+    const [material2Grams, setMaterial2Grams] = useState(0);
+
+    const [supportRemovalTimeHrs, setSupportRemovalTimeHrs] = useState(0); // J2
+    const [setupTimeHrs, setSetupTimeHrs] = useState(0); // K2
+    const [adminTimeHrs, setAdminTimeHrs] = useState(0); // L2
+
+    const getSetting = (key: string, fallback: number) => {
+        const v = settings?.[key];
+        return Number.isFinite(v) ? Number(v) : fallback;
+    };
+
+    const selectedMat1 = useMemo(
+        () => materials.find((m) => m.id === material1Id) ?? null,
+        [materials, material1Id]
+    );
+    const selectedMat2 = useMemo(
+        () => materials.find((m) => m.id === material2Id) ?? null,
+        [materials, material2Id]
+    );
+
+    const preview = useMemo(() => {
+        // Defaults (no UI dropdowns)
+        const defaultFailureRate = getSetting("default_failure_rate", 0.65); // I2 default 65%
+
+        // Rates (Variables equivalents)
+        const machineCostRate = getSetting("machine_cost_rate", 0); // D9
+        const electricityCostRate = getSetting("electricity_cost_rate", 0); // D10
+        const spaceConsumablesCostRate = getSetting("space_consumables_cost_rate", 0); // D11
+
+        const supportRemovalCostRate = getSetting("support_removal_cost_rate", 0); // D12
+        const machineSetupCostRate = getSetting("machine_setup_cost_rate", 0); // D13
+        const adminFeesCostRate = getSetting("admin_fees_cost_rate", 0); // D15
+
+        const monitoringTimePct = getSetting("monitoring_time_pct", 0); // D16
+        const monitoringTimeCostRate = getSetting("monitoring_time_cost_rate", 0); // D17
+
+        const preTaxSaleMarkup = getSetting("pre_tax_sale_markup", 0.65); // D18
+        const discountRate = getSetting("discount_rate", 0.1); // D19
+        const expeditedUpcharge = getSetting("expedited_upcharge", 0.1); // D20
+
+        const internalToExternalLaborRatio = getSetting(
+            "internal_to_external_labor_ratio",
+            0.4
+        ); // D21
+
+        // lbs (ceil to 0.01)
+        const lbs1 = gramsToPoundsCeil2dp(toNum(material1Grams));
+        const lbs2 = gramsToPoundsCeil2dp(toNum(material2Grams));
+
+        const rate1 = selectedMat1 ? toNum(selectedMat1.price_per_lb) : 0;
+        const rate2 = selectedMat2 ? toNum(selectedMat2.price_per_lb) : 0;
+
+        // Q2 = D2 * machineCostRate
+        const Q2_machineCost = toNum(printTimeHours) * machineCostRate;
+
+        // R2 = (lbs1*rate1 + lbs2*rate2) * 1.65
+        const R2_materialUseCost = (lbs1 * rate1 + lbs2 * rate2) * 1.65;
+
+        // S2 = D2*(electricity + space/consumables)
+        const S2_elecSpaceCost =
+            toNum(printTimeHours) * (electricityCostRate + spaceConsumablesCostRate);
+
+        // T2 = SUM(Q2:S2)
+        const T2_manufacturingCost = Q2_machineCost + R2_materialUseCost + S2_elecSpaceCost;
+
+        // W2 = J2*D12 + K2*D13 + L2*D15 + D2*D16*D17
+        const W2_laborFees =
+            toNum(supportRemovalTimeHrs) * supportRemovalCostRate +
+            toNum(setupTimeHrs) * machineSetupCostRate +
+            toNum(adminTimeHrs) * adminFeesCostRate +
+            toNum(printTimeHours) * monitoringTimePct * monitoringTimeCostRate;
+
+        // U2 = T2*(1+failure)
+        const U2_withFailRate = T2_manufacturingCost * (1 + defaultFailureRate);
+
+        // V2 = U2 + (W2 * ratio)
+        const V2_totalWithExternalLabor =
+            U2_withFailRate + W2_laborFees * internalToExternalLaborRatio;
+
+        // Pricing layer (your sheet has sales markup/discount/expedite columns)
+        const preTaxNoDiscount = V2_totalWithExternalLabor * (1 + preTaxSaleMarkup);
+        const discounted = preTaxNoDiscount * (1 - discountRate);
+        const expedited = preTaxNoDiscount * (1 + expeditedUpcharge);
+
+        const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+        return {
+            lbs1: round2(lbs1),
+            lbs2: round2(lbs2),
+            rate1: round2(rate1),
+            rate2: round2(rate2),
+
+            Q2_machineCost: round2(Q2_machineCost),
+            R2_materialUseCost: round2(R2_materialUseCost),
+            S2_elecSpaceCost: round2(S2_elecSpaceCost),
+            T2_manufacturingCost: round2(T2_manufacturingCost),
+            W2_laborFees: round2(W2_laborFees),
+            U2_withFailRate: round2(U2_withFailRate),
+            V2_totalWithExternalLabor: round2(V2_totalWithExternalLabor),
+
+            preTaxNoDiscount: round2(preTaxNoDiscount),
+            discounted: round2(discounted),
+            expedited: round2(expedited),
+
+            defaultFailureRate,
+            internalToExternalLaborRatio,
+            preTaxSaleMarkup,
+            discountRate,
+            expeditedUpcharge,
+        };
+    }, [
+        settings,
+        materials,
+        selectedMat1,
+        selectedMat2,
+        printTimeHours,
+        material1Grams,
+        material2Grams,
+        supportRemovalTimeHrs,
+        setupTimeHrs,
+        adminTimeHrs,
+    ]);
+
     return (
         <div className="rounded-2xl border border-neutral-800 bg-neutral-950/40 p-4 shadow-sm">
             <form action={action} className="grid gap-4">
-                {fromRequest ? (
-                    <input type="hidden" name="from_request_id" value={fromRequest} />
-                ) : null}
+                {fromRequest ? <input type="hidden" name="from_request_id" value={fromRequest} /> : null}
+
                 <div className="grid gap-3 md:grid-cols-2">
                     <label className="grid gap-1">
                         <span className="text-xs text-neutral-400">Customer name</span>
@@ -98,11 +245,9 @@ export default function QuoteFormClient({
                                 <button
                                     key={svcDef.key}
                                     type="button"
-                                    onClick={() =>
-                                        setSvc((s) => ({ ...s, [svcDef.key]: !active }))
-                                    }
-                                    className={`h-10 rounded-md border px-3 text-sm font-medium transition 
-                                        ${active
+                                    onClick={() => setSvc((s) => ({ ...s, [svcDef.key]: !active }))}
+                                    className={`h-10 rounded-md border px-3 text-sm font-medium transition
+                    ${active
                                             ? "bg-blue-600 border-blue-500 text-white"
                                             : "bg-neutral-950 border-neutral-800 text-neutral-200 hover:bg-neutral-900"
                                         }`}
@@ -118,13 +263,12 @@ export default function QuoteFormClient({
                     <input type="hidden" name="svc_3d_design" value={svc.design ? "on" : ""} />
                     <input type="hidden" name="svc_material_testing" value={svc.testing ? "on" : ""} />
 
-
                     <div className="mt-3 text-xs text-neutral-500">
                         Sections below only appear when the corresponding service is checked.
                     </div>
                 </div>
 
-                {/* Contract Printing (only if checked) */}
+                {/* Contract Printing */}
                 {svc.contract_printing && (
                     <div className="rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
                         <div className="mb-2 text-sm font-medium text-neutral-200">Contract Printing details</div>
@@ -138,6 +282,7 @@ export default function QuoteFormClient({
                                     step="0.01"
                                     min="0"
                                     defaultValue="0"
+                                    onChange={(e) => setPrintTimeHours(toNum(e.target.value))}
                                     className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
                                 />
                             </label>
@@ -153,6 +298,7 @@ export default function QuoteFormClient({
                                             name="material1_id"
                                             className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
                                             defaultValue=""
+                                            onChange={(e) => setMaterial1Id(e.target.value)}
                                         >
                                             <option value="">— Select —</option>
                                             {materials.map((m) => (
@@ -172,6 +318,7 @@ export default function QuoteFormClient({
                                             step="0.01"
                                             min="0"
                                             defaultValue="0"
+                                            onChange={(e) => setMaterial1Grams(toNum(e.target.value))}
                                             className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
                                         />
                                     </label>
@@ -187,6 +334,7 @@ export default function QuoteFormClient({
                                             name="material2_id"
                                             className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
                                             defaultValue=""
+                                            onChange={(e) => setMaterial2Id(e.target.value)}
                                         >
                                             <option value="">— None —</option>
                                             {materials.map((m) => (
@@ -206,16 +354,58 @@ export default function QuoteFormClient({
                                             step="0.01"
                                             min="0"
                                             defaultValue="0"
+                                            onChange={(e) => setMaterial2Grams(toNum(e.target.value))}
                                             className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
                                         />
                                     </label>
                                 </div>
                             </div>
+
+                            <div className="grid gap-3 md:grid-cols-3">
+                                <label className="grid gap-1">
+                                    <span className="text-xs text-neutral-400">Support removal time (hours)</span>
+                                    <input
+                                        name="support_removal_time_hours"
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        defaultValue="0"
+                                        onChange={(e) => setSupportRemovalTimeHrs(toNum(e.target.value))}
+                                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                    />
+                                </label>
+
+                                <label className="grid gap-1">
+                                    <span className="text-xs text-neutral-400">Setup time (hours)</span>
+                                    <input
+                                        name="setup_time_hours"
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        defaultValue="0"
+                                        onChange={(e) => setSetupTimeHrs(toNum(e.target.value))}
+                                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                    />
+                                </label>
+
+                                <label className="grid gap-1">
+                                    <span className="text-xs text-neutral-400">Admin time (hours)</span>
+                                    <input
+                                        name="admin_time_hours"
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        defaultValue="0"
+                                        onChange={(e) => setAdminTimeHrs(toNum(e.target.value))}
+                                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                    />
+                                </label>
+                            </div>
                         </div>
                     </div>
                 )}
 
-                {/* Other services hours: only show selected services, and resize row */}
+                {/* Other services hours */}
                 {otherSelectedCount > 0 && (
                     <div className={`grid gap-3 ${otherGridColsClass}`}>
                         {svc.scanning && (
@@ -259,6 +449,93 @@ export default function QuoteFormClient({
                                 />
                             </label>
                         )}
+                    </div>
+                )}
+
+                {/* ✅ Preview moved directly above Notes */}
+                {svc.contract_printing && (
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
+                        <div className="mb-2 text-sm font-medium text-neutral-200">Preview</div>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                <div className="text-sm text-neutral-300">Material 1</div>
+                                <div className="mt-1 text-lg font-semibold text-white">
+                                    {preview.lbs1.toFixed(2)} lb @ {money(preview.rate1)}/lb
+                                </div>
+                                <div className="text-sm text-neutral-400">
+                                    (with 1.65 factor inside R2)
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                <div className="text-sm text-neutral-300">Material 2</div>
+                                <div className="mt-1 text-lg font-semibold text-white">
+                                    {preview.lbs2.toFixed(2)} lb @ {money(preview.rate2)}/lb
+                                </div>
+                                <div className="text-sm text-neutral-400">
+                                    (with 1.65 factor inside R2)
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="mt-3 grid gap-2 md:grid-cols-2">
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                <div className="text-sm text-neutral-300">Manufacturing cost (T2)</div>
+                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.T2_manufacturingCost)}</div>
+                                <div className="text-xs text-neutral-500">
+                                    Q2 machine + R2 material + S2 elec/space
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                <div className="text-sm text-neutral-300">Labor fees (W2)</div>
+                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.W2_laborFees)}</div>
+                                <div className="text-xs text-neutral-500">
+                                    support + setup + admin + monitoring
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                <div className="text-sm text-neutral-300">With failure rate (U2)</div>
+                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.U2_withFailRate)}</div>
+                                <div className="text-xs text-neutral-500">
+                                    failure default {(preview.defaultFailureRate * 100).toFixed(0)}%
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                <div className="text-sm text-neutral-300">Internal cost (V2)</div>
+                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.V2_totalWithExternalLabor)}</div>
+                                <div className="text-xs text-neutral-500">
+                                    U2 + (W2 * ratio {preview.internalToExternalLaborRatio})
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                <div className="text-sm text-neutral-300">Total price (no discount)</div>
+                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.preTaxNoDiscount)}</div>
+                                <div className="text-xs text-neutral-500">
+                                    markup {(preview.preTaxSaleMarkup * 100).toFixed(0)}%
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                <div className="text-sm text-neutral-300">Discounted / Expedited</div>
+                                <div className="mt-1 text-sm text-neutral-200">
+                                    Discount ({(preview.discountRate * 100).toFixed(0)}%):{" "}
+                                    <span className="font-semibold text-white">{money(preview.discounted)}</span>
+                                </div>
+                                <div className="text-sm text-neutral-200">
+                                    Expedited ({(preview.expeditedUpcharge * 100).toFixed(0)}%):{" "}
+                                    <span className="font-semibold text-white">{money(preview.expedited)}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <p className="mt-3 text-xs text-neutral-500">
+                            This preview is live and does not affect saved values until you click “Save Quote”.
+                        </p>
                     </div>
                 )}
 

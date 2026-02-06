@@ -89,10 +89,19 @@ export default async function NewQuotePage({
 
     const { data: materials, error } = await supabase
         .from("material_costs")
-        .select("id,name,category,is_active")
+        .select("id,name,category,is_active,price_per_lb")
         .eq("is_active", true)
         .order("category", { ascending: true })
         .order("name", { ascending: true });
+
+    const { data: settingsRows, error: settingsErr } = await supabase
+        .from("cost_settings")
+        .select("key,value");
+
+    const settings: Record<string, number> = Object.fromEntries(
+        (settingsRows ?? []).map((r: any) => [String(r.key), Number(r.value)])
+    );
+
 
     return (
         <AppShell title="New Quote">
@@ -127,6 +136,7 @@ export default async function NewQuotePage({
 
                 <QuoteFormClient
                     materials={(materials ?? []) as any}
+                    settings={settings}
                     action={createQuote}
                     initialSvc={initialSvc}
                     fromRequest={fromRequest}
@@ -198,6 +208,15 @@ async function createQuote(formData: FormData) {
         const material2_grams = Number(
             String(formData.get("material2_grams") ?? "0").trim()
         );
+
+        const support_removal_hours = Number(String(formData.get("support_removal_hours") ?? "0").trim());
+        const setup_hours = Number(String(formData.get("setup_hours") ?? "0").trim());
+        const admin_hours = Number(String(formData.get("admin_hours") ?? "0").trim());
+
+        if (!Number.isFinite(support_removal_hours) || support_removal_hours < 0) throw new Error("Invalid support removal hours.");
+        if (!Number.isFinite(setup_hours) || setup_hours < 0) throw new Error("Invalid setup hours.");
+        if (!Number.isFinite(admin_hours) || admin_hours < 0) throw new Error("Invalid admin hours.");
+
 
         if (!Number.isFinite(print_time_hours) || print_time_hours < 0)
             throw new Error("Invalid print time.");
@@ -342,9 +361,9 @@ async function createQuote(formData: FormData) {
                 Q2_machineCost + R2_materialUseCost + S2_elecSpaceCost;
 
             // W2 (labor fees) — you’re not collecting J/K/L yet, so default to 0 for now
-            const J2_supportRemovalTime = 0;
-            const K2_setupTime = 0;
-            const L2_adminTime = 0;
+            const J2_supportRemovalTime = support_removal_hours;
+            const K2_setupTime = setup_hours;
+            const L2_adminTime = admin_hours;
 
             const W2_laborFees =
                 J2_supportRemovalTime * supportRemovalCostRate +
@@ -396,6 +415,9 @@ async function createQuote(formData: FormData) {
                     material1_grams,
                     material2_id,
                     material2_grams,
+                    support_removal_hours,
+                    setup_hours,
+                    admin_hours,
                     calc: roundedContractCalc,
                 },
             });
