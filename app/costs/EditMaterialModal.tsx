@@ -30,13 +30,15 @@ export default function EditMaterialModal({
 
     return (
         <>
-            <button
-                type="button"
-                onClick={() => setOpen(true)}
-                className="h-9 w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 text-xs text-neutral-200 hover:bg-neutral-900"
-            >
-                Edit
-            </button>
+            <div className="flex justify-end">
+                <button
+                    type="button"
+                    onClick={() => setOpen(true)}
+                    className="h-9 w-24 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-xs text-neutral-200 hover:bg-neutral-900"
+                >
+                    Edit
+                </button>
+            </div>
 
             {open && (
                 <div className="fixed inset-0 z-50">

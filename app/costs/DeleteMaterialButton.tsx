@@ -22,7 +22,7 @@ export default function DeleteMaterialButton({
             <input type="hidden" name="id" value={id} />
             <button
                 type="submit"
-                className="h-9 w-full rounded-md border border-red-900/40 bg-red-950/20 px-3 text-xs text-red-200 hover:bg-red-950/40"
+                className="h-9 w-24 rounded-md border border-red-900/40 bg-red-950/20 px-3 text-xs text-red-200 hover:bg-red-950/40"
             >
                 Delete
             </button>

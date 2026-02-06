@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 import EditMaterialModal from "./EditMaterialModal";
 import DeleteMaterialButton from "./DeleteMaterialButton";
+import Link from "next/link";
 
 
 
@@ -54,11 +55,20 @@ export default async function CostsPage({
     return (
         <AppShell title="Costs Manager">
             <div className="mx-auto w-full max-w-6xl p-6">
-                <div className="mb-6">
-                    <h1 className="text-2xl font-semibold">Costs Manager</h1>
-                    <p className="mt-1 text-sm text-neutral-400">
-                        Manage materials (filament) and global cost settings. Pricing logic comes later.
-                    </p>
+                <div className="mb-6 flex items-start justify-between gap-4">
+                    <div>
+                        <h1 className="text-2xl font-semibold">Costs Manager</h1>
+                        <p className="mt-1 text-sm text-neutral-400">
+                            Manage materials (filament) and global cost settings. Pricing logic comes later.
+                        </p>
+                    </div>
+
+                    <Link
+                        href="/settings"
+                        className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-800 bg-neutral-950 px-4 text-sm font-medium text-neutral-200 hover:bg-neutral-900"
+                    >
+                        Back to Settings
+                    </Link>
                 </div>
 
                 {sp?.msg && (
@@ -158,7 +168,7 @@ export default async function CostsPage({
                         </div>
 
                         {/* Materials Table */}
-                        <div className="overflow-hidden rounded-xl border border-neutral-800">
+                        <div className="overflow-x-auto rounded-xl border border-neutral-800">
                             <table className="w-full text-sm">
                                 <thead className="bg-neutral-950/60 text-left text-neutral-300">
                                     <tr className="border-b border-neutral-800">
@@ -204,19 +214,20 @@ export default async function CostsPage({
                                                 </td>
 
                                                 <td className="px-3 py-2">
-                                                    {/* Edit Material (simple inline form) */}
-                                                    <div className="grid justify-end gap-2">
+                                                    <div className="flex flex-wrap justify-end gap-2">
                                                         <EditMaterialModal material={m} action={updateMaterial} />
-                                                        <form action={toggleMaterialActive} className="justify-end">
+
+                                                        <form action={toggleMaterialActive}>
                                                             <input type="hidden" name="id" value={m.id} />
                                                             <input type="hidden" name="is_active" value={String(!m.is_active)} />
                                                             <button
                                                                 type="submit"
-                                                                className="h-9 w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 text-xs text-neutral-200 hover:bg-neutral-900"
+                                                                className="h-9 w-24 rounded-md border border-yellow-900/40 bg-yellow-950/20 px-3 text-xs text-yellow-200 hover:bg-yellow-950/35"
                                                             >
                                                                 {m.is_active ? "Deactivate" : "Activate"}
                                                             </button>
                                                         </form>
+
                                                         <DeleteMaterialButton id={m.id} name={m.name} action={deleteMaterial} />
                                                     </div>
                                                 </td>
@@ -231,80 +242,67 @@ export default async function CostsPage({
                     {/* =========================
               Settings
           ========================= */}
-                    <section className="rounded-2xl border border-neutral-800 bg-neutral-950/40 p-4 shadow-sm">
-                        <div className="mb-4">
-                            <h2 className="text-lg font-semibold">Cost Settings</h2>
-                            <p className="mt-1 text-sm text-neutral-400">
-                                Edit global rates/settings (your “Variables sheet” equivalents).
-                            </p>
+                    <div className="rounded-xl border border-neutral-800 overflow-hidden">
+                        <div className="grid grid-cols-[minmax(0,1fr)_120px_1fr] text-sm">
+                            {/* Header */}
+                            <div className="px-3 py-2 bg-neutral-950/60 text-neutral-300 border-b border-neutral-800">
+                                Label
+                            </div>
+                            <div className="px-3 py-2 bg-neutral-950/60 text-neutral-300 border-b border-neutral-800">
+                                Unit
+                            </div>
+                            <div className="px-3 py-2 bg-neutral-950/60 text-neutral-300 border-b border-neutral-800 text-right">
+                                Value
+                            </div>
+
+                            {/* Rows */}
+                            {(settings ?? []).map((s) => (
+                                <div key={s.key} className="contents">
+                                    {/* Label */}
+                                    <div className="px-3 py-2 border-b border-neutral-800">
+                                        <div className="font-medium text-neutral-100">
+                                            {s.label ?? s.key}
+                                        </div>
+                                        <div className="text-xs text-neutral-500">
+                                            Updated:{" "}
+                                            {s.updated_at
+                                                ? new Date(s.updated_at).toLocaleString()
+                                                : "—"}
+                                        </div>
+                                    </div>
+
+                                    {/* Unit */}
+                                    <div className="px-3 py-2 border-b border-neutral-800 text-neutral-200">
+                                        {s.unit ?? "—"}
+                                    </div>
+
+                                    {/* Value + Save */}
+                                    <div className="px-3 py-2 border-b border-neutral-800">
+                                        <form
+                                            action={updateSetting}
+                                            className="flex flex-wrap justify-end gap-2"
+                                        >
+                                            <input type="hidden" name="key" value={s.key} />
+                                            <input
+                                                name="value"
+                                                defaultValue={s.value ?? ""}
+                                                className="h-9 w-32 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                            />
+                                            <button
+                                                type="submit"
+                                                className="h-9 rounded-md bg-white px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200"
+                                            >
+                                                Save
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
-
-                        <div className="overflow-hidden rounded-xl border border-neutral-800">
-                            <table className="w-full text-sm">
-                                <thead className="bg-neutral-950/60 text-left text-neutral-300">
-                                    <tr className="border-b border-neutral-800">
-                                        <th className="px-3 py-2">Key</th>
-                                        <th className="px-3 py-2">Label</th>
-                                        <th className="px-3 py-2">Unit</th>
-                                        <th className="px-3 py-2">Value</th>
-                                        <th className="px-3 py-2 text-right">Save</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-neutral-800 bg-neutral-950/30">
-                                    {(settings ?? []).length === 0 ? (
-                                        <tr>
-                                            <td className="px-3 py-3 text-neutral-400" colSpan={5}>
-                                                No settings found.
-                                            </td>
-                                        </tr>
-                                    ) : (
-                                        (settings ?? []).map((s) => (
-                                            <tr key={s.key} className="align-top">
-                                                <td className="px-3 py-2">
-                                                    <div className="font-mono text-xs text-neutral-200">{s.key}</div>
-                                                    <div className="text-xs text-neutral-500">
-                                                        Updated: {s.updated_at ? new Date(s.updated_at).toLocaleString() : "—"}
-                                                    </div>
-                                                </td>
-
-                                                <td className="px-3 py-2 text-neutral-200">{s.label ?? "—"}</td>
-                                                <td className="px-3 py-2 text-neutral-200">{s.unit ?? "—"}</td>
-
-                                                <td className="px-3 py-2">
-                                                    <form action={updateSetting} className="flex items-center gap-2 justify-end">
-                                                        <input type="hidden" name="key" value={s.key} />
-                                                        <input
-                                                            name="value"
-                                                            defaultValue={s.value ?? ""}
-                                                            className="h-9 w-40 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
-                                                        />
-                                                        <button
-                                                            type="submit"
-                                                            className="h-9 rounded-md bg-white px-3 text-sm font-medium text-neutral-900 hover:bg-neutral-200"
-                                                        >
-                                                            Save
-                                                        </button>
-                                                    </form>
-                                                </td>
-
-                                                <td className="px-3 py-2 text-right">
-                                                    {/* keep column for alignment */}
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div className="mt-3 text-xs text-neutral-500">
-                            Note: This assumes <span className="font-mono">cost_settings</span> has columns{" "}
-                            <span className="font-mono">key,label,unit,value,updated_at</span>.
-                        </div>
-                    </section>
+                    </div>
                 </div>
-            </div>
-        </AppShell>
+            </div >
+        </AppShell >
     );
 }
 

@@ -141,11 +141,6 @@ export default function QuoteFormClient({
         const discountRate = getSetting("discount_rate", 0.1); // D19
         const expeditedUpcharge = getSetting("expedited_upcharge", 0.1); // D20
 
-        const internalToExternalLaborRatio = getSetting(
-            "internal_to_external_labor_ratio",
-            0.4
-        ); // D21
-
         // lbs (ceil to 0.01)
         const lbs1 = gramsToPoundsCeil2dp(toNum(material1Grams));
         const lbs2 = gramsToPoundsCeil2dp(toNum(material2Grams));
@@ -176,14 +171,15 @@ export default function QuoteFormClient({
         // U2 = T2*(1+failure)
         const U2_withFailRate = T2_manufacturingCost * (1 + defaultFailureRate);
 
-        // V2 = U2 + (W2 * ratio)
-        const V2_totalWithExternalLabor =
-            U2_withFailRate + W2_laborFees * internalToExternalLaborRatio;
+        // V (pre-tax manufacturing with sales markup): U * (1 + markup)
+        const V_preTaxManufacturing = U2_withFailRate * (1 + preTaxSaleMarkup);
 
-        // Pricing layer (your sheet has sales markup/discount/expedite columns)
-        const preTaxNoDiscount = V2_totalWithExternalLabor * (1 + preTaxSaleMarkup);
-        const discounted = preTaxNoDiscount * (1 - discountRate);
-        const expedited = preTaxNoDiscount * (1 + expeditedUpcharge);
+        // X (total price, no discount/expedite): V + W
+        const X_totalNoDiscount = V_preTaxManufacturing + W2_laborFees;
+
+        // Discount / expedite pricing
+        const discounted = X_totalNoDiscount * (1 - discountRate);
+        const expedited = X_totalNoDiscount * (1 + expeditedUpcharge);
 
         const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -199,14 +195,12 @@ export default function QuoteFormClient({
             T2_manufacturingCost: round2(T2_manufacturingCost),
             W2_laborFees: round2(W2_laborFees),
             U2_withFailRate: round2(U2_withFailRate),
-            V2_totalWithExternalLabor: round2(V2_totalWithExternalLabor),
-
-            preTaxNoDiscount: round2(preTaxNoDiscount),
+            V_preTaxManufacturing: round2(V_preTaxManufacturing),
+            X_totalNoDiscount: round2(X_totalNoDiscount),
             discounted: round2(discounted),
             expedited: round2(expedited),
 
             defaultFailureRate,
-            internalToExternalLaborRatio,
             preTaxSaleMarkup,
             discountRate,
             expeditedUpcharge,
@@ -561,15 +555,16 @@ export default function QuoteFormClient({
 
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Internal cost</div>
-                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.V2_totalWithExternalLabor)}</div>
+                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.U2_withFailRate + preview.W2_laborFees)}</div>
                                 <div className="text-xs text-neutral-500">
-                                    includes external labor factor ({preview.internalToExternalLaborRatio})
+                                    internal cost basis (materials + machine + labor allocation)
                                 </div>
                             </div>
 
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Total price (no discount)</div>
-                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.preTaxNoDiscount)}</div>
+                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.X_totalNoDiscount)}
+                                </div>
                                 <div className="text-xs text-neutral-500">
                                     markup {(preview.preTaxSaleMarkup * 100).toFixed(0)}%
                                 </div>

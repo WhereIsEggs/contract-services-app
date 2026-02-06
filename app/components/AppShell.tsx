@@ -134,9 +134,12 @@ export default function AppShell({
                             <span className="rounded-md px-3 py-2 text-neutral-500 cursor-not-allowed opacity-60">
                                 Activity (soon)
                             </span>
-                            <span className="rounded-md px-3 py-2 text-neutral-500 cursor-not-allowed opacity-60">
-                                Settings (soon)
-                            </span>
+                            <Link
+                                href="/settings"
+                                className="rounded-md px-3 py-2 text-neutral-200 hover:bg-neutral-900 hover:text-white"
+                            >
+                                Settings
+                            </Link>
                         </nav>
 
                         <div className="mt-auto grid gap-3">
