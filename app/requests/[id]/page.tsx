@@ -1,8 +1,9 @@
 import { createClient } from "@/app/lib/supabase/server";
 import AppShell from "@/app/components/AppShell";
 import { updateServiceStepStatus } from "@/app/actions";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import ProgressUpdateToggle from "@/app/components/ProgressUpdateToggle";
+import LinkedQuoteSelector from "@/app/requests/LinkedQuoteSelector";
 
 
 
@@ -21,11 +22,13 @@ export default async function RequestDetailPage({
         .select(
             `
         id,
+        request_number,
         customer_name,
         created_at,
         services_requested,
         overall_status,
         project_details,
+        quote_id,
 request_services (
   id,
   service_type,
@@ -43,6 +46,32 @@ request_services (
 
     if (error || !request) notFound();
 
+    const { data: recentQuotes, error: quotesError } = await supabase
+        .from("quotes")
+        .select("id,customer_name,job_name,created_at")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+    // Build a set of quote_ids already linked to ANY request
+    const { data: linkedRows, error: linkedError } = await supabase
+        .from("requests")
+        .select("quote_id")
+        .not("quote_id", "is", null);
+
+    const currentQuoteId = (request as any).quote_id as string | null;
+
+    const linkedSet = new Set<string>(
+        (linkedRows ?? [])
+            .map((r: any) => r.quote_id)
+            .filter(Boolean)
+    );
+
+    const availableQuotes =
+        linkedError
+            ? (recentQuotes ?? [])
+            : (recentQuotes ?? []).filter((q: any) => !linkedSet.has(q.id) || q.id === currentQuoteId);
+
+
     // Normalize nested rows
     const serviceSteps = Array.isArray((request as any).request_services)
         ? (((request as any).request_services as any[]) ?? [])
@@ -58,7 +87,17 @@ request_services (
         steps.find((s: any) => s.step_status === "Not Started" || s.step_status === "Waiting") ?? null;
 
     return (
-        <AppShell title="Request Details" hideHeaderTitle>
+        <AppShell
+            title="Request Details"
+            hideHeaderTitle
+            activeNav={
+                request.overall_status === "Completed"
+                    ? "completed"
+                    : request.overall_status === "In Progress"
+                        ? "in_progress"
+                        : "requests"
+            }
+        >
             <div className="max-w-[900px] mx-auto">
                 <div className="mb-6">
                     <h2 className="text-2xl font-semibold text-neutral-100">Request Details</h2>
@@ -73,9 +112,57 @@ request_services (
                         </div>
 
                         <div>
+                            <span className="text-neutral-400">Request ID:</span>
+                            <div className="font-medium">
+                                {String((request as any).request_number ?? "").padStart(5, "0")}
+                            </div>
+                        </div>
+
+
+                        <div>
                             <span className="text-neutral-400">Requested Services</span>
                             <div>{(request.services_requested ?? []).join(", ") || "—"}</div>
                         </div>
+
+                        <div>
+                            <span className="text-neutral-400">Linked Quote</span>
+
+                            <div className="mt-2 grid gap-2">
+                                {quotesError ? (
+                                    <div className="text-xs text-red-300">Could not load quotes: {quotesError.message}</div>
+                                ) : (
+                                    <>
+                                        {/* Attach / change quote */}
+                                        <LinkedQuoteSelector
+                                            requestId={id}
+                                            currentQuoteId={(request as any).quote_id ?? null}
+                                            quotes={(availableQuotes ?? []) as any}
+                                            action={async (formData) => {
+                                                "use server";
+                                                const supabase = await createClient();
+
+                                                const quoteIdRaw = String(formData.get("quote_id") ?? "").trim();
+                                                const quote_id = quoteIdRaw.length ? quoteIdRaw : null;
+
+                                                const { error } = await supabase
+                                                    .from("requests")
+                                                    .update({ quote_id })
+                                                    .eq("id", id);
+
+                                                if (error) throw new Error(error.message);
+
+                                                redirect(`/requests/${id}`);
+                                            }}
+                                        />
+                                        {/* Quick link to view the quote list */}
+                                        <div className="text-xs text-neutral-500">
+                                            Tip: Open the Quote Tool in another tab to copy details. (Quote detail view comes later.)
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
 
                         <div>
                             <span className="text-neutral-400">Service Steps</span>
@@ -90,10 +177,39 @@ request_services (
                                                     <form
                                                         action={async () => {
                                                             "use server";
+
+                                                            if (!activeStep?.id) return;
+
+                                                            // Complete the active step
                                                             await updateServiceStepStatus(activeStep.id, "Completed");
+
+                                                            // Keep overall status in sync (Completed if no more steps, else In Progress)
+                                                            const supabase = await createClient();
+
+                                                            const { data: remaining } = await supabase
+                                                                .from("request_services")
+                                                                .select("id")
+                                                                .eq("request_id", id)
+                                                                .neq("step_status", "Completed")
+                                                                .limit(1);
+
+                                                            const overall_status =
+                                                                (remaining ?? []).length === 0 ? "Completed" : "In Progress";
+
+                                                            const { error } = await supabase
+                                                                .from("requests")
+                                                                .update({ overall_status })
+                                                                .eq("id", id);
+
+                                                            if (error) throw new Error(error.message);
+
+                                                            redirect(`/requests/${id}`);
                                                         }}
                                                     >
-                                                        <button type="submit">
+                                                        <button
+                                                            type="submit"
+                                                            className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-500"
+                                                        >
                                                             Complete {activeStep.service_type}
                                                         </button>
                                                     </form>
@@ -111,10 +227,26 @@ request_services (
                                                 <form
                                                     action={async () => {
                                                         "use server";
+
+                                                        if (!firstNotStarted?.id) return;
+
                                                         await updateServiceStepStatus(firstNotStarted.id, "In Progress");
+
+                                                        const supabase = await createClient();
+                                                        const { error } = await supabase
+                                                            .from("requests")
+                                                            .update({ overall_status: "In Progress" })
+                                                            .eq("id", id);
+
+                                                        if (error) throw new Error(error.message);
+
+                                                        redirect(`/requests/${id}`);
                                                     }}
                                                 >
-                                                    <button type="submit">
+                                                    <button
+                                                        type="submit"
+                                                        className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-500"
+                                                    >
                                                         Start {firstNotStarted.service_type}
                                                     </button>
                                                 </form>

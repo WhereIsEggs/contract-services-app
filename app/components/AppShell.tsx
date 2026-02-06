@@ -8,26 +8,42 @@ export default function AppShell({
     title,
     children,
     hideHeaderTitle = false,
+    activeNav,
 }: {
     title: string;
     children: React.ReactNode;
     hideHeaderTitle?: boolean;
+    activeNav?: "dashboard" | "new_request" | "requests" | "in_progress" | "completed" | "late" | "quote_tool" | "costs";
 }) {
     const pathname = usePathname();
     const searchParams = useSearchParams();
+
     const onDashboard = pathname === "/dashboard";
     const onNewRequest = pathname === "/requests/new";
-    const onNewQuote = pathname === "/quotes/new";
+    const onQuoteTool = pathname === "/quotes/new";
+
+    // Allow pages (like /requests/[id]) to force the sidebar highlight
+    const navOverride = activeNav ?? null;
+    const onQuoteToolFinal = navOverride ? navOverride === "quote_tool" : onQuoteTool;
     const onInProgress = pathname === "/requests" && searchParams.get("status") === "In Progress";
     const onCompleted = pathname === "/requests" && searchParams.get("status") === "Completed";
     const onLateJobs = pathname === "/requests" && searchParams.has("late");
 
+    // Allow pages (like /requests/[id]) to force the sidebar highlight
+    const onDashboardFinal = navOverride ? navOverride === "dashboard" : onDashboard;
+    const onNewRequestFinal = navOverride ? navOverride === "new_request" : onNewRequest;
+    const onInProgressFinal = navOverride ? navOverride === "in_progress" : onInProgress;
+    const onCompletedFinal = navOverride ? navOverride === "completed" : onCompleted;
+    const onLateJobsFinal = navOverride ? navOverride === "late" : onLateJobs;
+
     const hasListFilter = searchParams.has("status") || searchParams.has("late");
     const onRequests =
-        (pathname === "/requests" && !hasListFilter) ||
-        (pathname.startsWith("/requests/") &&
-            pathname !== "/requests/new" &&
-            pathname !== "/requests");
+        pathname === "/requests" &&
+        !searchParams.has("status") &&
+        !searchParams.has("late");
+
+    const onRequestsFinal = navOverride ? navOverride === "requests" : onRequests;
+
 
     return (
         <div className="min-h-dvh bg-neutral-950 text-neutral-100">
@@ -42,7 +58,7 @@ export default function AppShell({
                         <nav className="grid gap-1 text-sm">
                             <Link
                                 href="/dashboard"
-                                className={`rounded-md px-3 py-2 ${onDashboard
+                                className={`rounded-md px-3 py-2 ${onDashboardFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white"
                                     }`}
@@ -51,40 +67,40 @@ export default function AppShell({
                             </Link>
 
                             <Link
-                                href="/quotes/new"
-                                className={`block rounded-lg px-3 py-2 text-sm ${onNewQuote
+                                href="/requests/new"
+                                className={`block rounded-lg px-3 py-2 text-sm ${onNewRequestFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white transition"
                                     }`}
                             >
-                                New Quote
+                                New Request
                             </Link>
-
 
                             <Link
-                                href="/requests/new"
-                                className={`block rounded-lg px-3 py-2 text-sm ${onNewRequest
+                                href="/quotes/new"
+                                className={`block rounded-lg px-3 py-2 text-sm ${onQuoteToolFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white transition"
                                     }`}
                             >
-                                Submit Request
+                                Quote Tool
                             </Link>
+
 
                             <Link
                                 href="/requests"
-                                className={`rounded-md px-3 py-2 ${onRequests
+                                className={`rounded-md px-3 py-2 ${onRequestsFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white"
                                     }`}
                             >
-                                Requests
+                                Not Started
                             </Link>
 
 
                             <Link
                                 href="/requests?status=In%20Progress"
-                                className={`rounded-md px-3 py-2 ${onInProgress
+                                className={`rounded-md px-3 py-2 ${onInProgressFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white"
                                     }`}
@@ -94,7 +110,7 @@ export default function AppShell({
 
                             <Link
                                 href="/requests?status=Completed"
-                                className={`rounded-md px-3 py-2 ${onCompleted
+                                className={`rounded-md px-3 py-2 ${onCompletedFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white"
                                     }`}
@@ -104,7 +120,7 @@ export default function AppShell({
 
                             <Link
                                 href="/requests?late=1"
-                                className={`rounded-md px-3 py-2 ${onLateJobs
+                                className={`rounded-md px-3 py-2 ${onLateJobsFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white"
                                     }`}

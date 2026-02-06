@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type MaterialOption = {
     id: string;
@@ -12,17 +12,29 @@ type MaterialOption = {
 export default function QuoteFormClient({
     materials,
     action,
+    initialSvc,
+    fromRequest,
+    initialCustomerName,
+    initialJobName,
 }: {
     materials: MaterialOption[];
     action: (formData: FormData) => void;
+    initialSvc: {
+        contract_printing: boolean;
+        scanning: boolean;
+        design: boolean;
+        testing: boolean;
+    };
+    fromRequest: string;
+    initialCustomerName?: string;
+    initialJobName?: string;
+
 }) {
-    // Default: Contract Printing checked (matches your server assumptions / earlier UI)
-    const [svc, setSvc] = useState({
-        contract_printing: true,
-        scanning: false,
-        design: false,
-        testing: false,
-    });
+    const [svc, setSvc] = useState(() => initialSvc);
+
+    useEffect(() => {
+        setSvc(initialSvc);
+    }, [initialSvc]);
 
     const otherSelectedCount = useMemo(() => {
         return Number(svc.scanning) + Number(svc.design) + Number(svc.testing);
@@ -42,21 +54,28 @@ export default function QuoteFormClient({
     return (
         <div className="rounded-2xl border border-neutral-800 bg-neutral-950/40 p-4 shadow-sm">
             <form action={action} className="grid gap-4">
+                {fromRequest ? (
+                    <input type="hidden" name="from_request_id" value={fromRequest} />
+                ) : null}
                 <div className="grid gap-3 md:grid-cols-2">
                     <label className="grid gap-1">
                         <span className="text-xs text-neutral-400">Customer name</span>
                         <input
                             name="customer_name"
                             required
-                            className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                            defaultValue={initialCustomerName ?? ""}
+                            readOnly={Boolean(fromRequest)}
+                            className={`h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 ${fromRequest ? "opacity-80 cursor-not-allowed" : ""
+                                }`}
                         />
                     </label>
 
                     <label className="grid gap-1">
-                        <span className="text-xs text-neutral-400">Job name</span>
+                        <span className="text-xs text-neutral-400">Request ID:</span>
                         <input
                             name="job_name"
                             required
+                            defaultValue={initialJobName ?? ""}
                             className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
                         />
                     </label>
