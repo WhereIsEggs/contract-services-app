@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 
 type QuoteOption = {
@@ -14,81 +14,42 @@ type QuoteOption = {
 export default function LinkedQuoteSelector({
     requestId,
     currentQuoteId,
-    quotes,
-    action,
+    quotes, // keep for now so we don't break the parent prop shape
+    action, // keep for now so we don't break the parent prop shape
 }: {
     requestId: string;
     currentQuoteId: string | null;
     quotes: QuoteOption[];
     action: (formData: FormData) => void;
 }) {
-    const [selected, setSelected] = useState(currentQuoteId ?? "");
-    const [isPending, startTransition] = useTransition();
 
-    const hasChanged = selected !== (currentQuoteId ?? "");
+    const router = useRouter();
 
-    return (
-        <form
-            action={(formData) => {
-                startTransition(() => {
-                    action(formData);
-                });
-            }}
-            className="flex flex-wrap items-center gap-2"
-        >
-            <select
-                disabled={Boolean(currentQuoteId)}
-                name="quote_id"
-                value={selected}
-                onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === "__new_quote__") {
-                        window.location.href = `/quotes/new?fromRequest=${encodeURIComponent(requestId)}`;
-                        return;
-                    }
-                    setSelected(v);
-                }}
-                className={`h-10 min-w-[260px] rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 ${currentQuoteId ? "opacity-70 cursor-not-allowed" : ""
-                    }`}
-            >
-                <option value="">— No quote linked —</option>
-
-                {quotes.length === 0 ? (
-                    <option value="__new_quote__">＋ Create a new quote…</option>
-                ) : (
-                    quotes.map((q) => (
-                        <option key={q.id} value={q.id}>
-                            {new Date(q.created_at).toLocaleDateString()} — {q.customer_name} — {q.job_name}
-                        </option>
-                    ))
-                )}
-            </select>
-
-            {hasChanged && (
-                <button
-                    type="submit"
-                    disabled={isPending}
-                    className={`h-10 rounded-md px-4 text-sm font-medium transition
-            ${isPending
-                            ? "bg-neutral-700 text-neutral-300 cursor-not-allowed"
-                            : "bg-white text-neutral-900 hover:bg-neutral-200"
-                        }`}
+    // If already linked, show status + view link
+    if (currentQuoteId) {
+        return (
+            <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs text-emerald-400">✓ Linked</span>
+                <Link
+                    href={`/quotes/${currentQuoteId}`}
+                    className="text-xs text-neutral-300 underline hover:text-white"
                 >
-                    {isPending ? "Saving…" : "Save"}
-                </button>
-            )}
+                    View quote
+                </Link>
+            </div>
+        );
+    }
 
-            {!hasChanged && selected && (
-                <div className="flex items-center gap-3">
-                    <span className="text-xs text-emerald-400">✓ Linked</span>
-                    <Link
-                        href={`/quotes/${selected}`}
-                        className="text-xs text-neutral-300 underline hover:text-white"
-                    >
-                        View quote
-                    </Link>
-                </div>
-            )}
-        </form>
+    // Otherwise, show create button
+    return (
+        <button
+            type="button"
+            onClick={() => {
+                router.push(`/quotes/new?fromRequest=${encodeURIComponent(requestId)}`);
+            }}
+            className="inline-flex h-10 items-center justify-center rounded-md bg-white px-4 text-sm font-medium text-neutral-900 hover:bg-neutral-200"
+        >
+            Create New Quote
+        </button>
     );
 }

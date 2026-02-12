@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "./lib/supabase/server";
+import { redirect } from "next/navigation";
+
 
 function readServices(formData: FormData) {
   const services: string[] = [];
@@ -11,21 +13,36 @@ function readServices(formData: FormData) {
   return services;
 }
 
-export async function createRequest(formData: FormData) {
+export type CreateRequestState = {
+  ok: boolean;
+  errors: string[];
+  requestId?: string;
+};
+
+export async function createRequestAction(
+  _prevState: CreateRequestState,
+  formData: FormData
+): Promise<CreateRequestState> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) throw new Error("Not authenticated");
+  if (!user) redirect("/login");
 
   const customer_name = String(formData.get("customer_name") ?? "").trim();
   const project_details = String(formData.get("project_details") ?? "").trim();
   const services_requested = readServices(formData);
 
-  if (!customer_name) throw new Error("Customer Name is required.");
-  if (services_requested.length === 0) throw new Error("Select at least one service.");
-  if (!project_details) throw new Error("Project Details are required.");
+  // Validate ALL at once
+  const errors: string[] = [];
+  if (!customer_name) errors.push("Customer Name is required.");
+  if (!project_details) errors.push("Project Details are required.");
+  if (services_requested.length === 0) errors.push("Select at least one service.");
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
 
   // 1) Create the parent request and get its id back
   const { data: newRequest, error: reqError } = await supabase
@@ -36,7 +53,6 @@ export async function createRequest(formData: FormData) {
         project_details,
         services_requested,
         overall_status: "New",
-        // legacy per-service columns stay in schema for now, but are not the source of truth
         scan_status: "Not Started",
         design_status: "Not Started",
         print_status: "Not Started",
@@ -45,7 +61,12 @@ export async function createRequest(formData: FormData) {
     .select("id")
     .single();
 
-  if (reqError || !newRequest) throw new Error(JSON.stringify(reqError));
+  if (reqError || !newRequest) {
+    return {
+      ok: false,
+      errors: [reqError?.message ?? "Failed to create request."],
+    };
+  }
 
   // 2) Create one service-step row per selected service
   const sortOrder: Record<string, number> = {
@@ -65,8 +86,81 @@ export async function createRequest(formData: FormData) {
     .from("request_services")
     .insert(serviceRows);
 
-  if (svcError) throw new Error(JSON.stringify(svcError));
+  if (svcError) {
+    return {
+      ok: false,
+      errors: [svcError.message ?? "Failed to create request services."],
+    };
+  }
 
+  revalidatePath("/requests");
+  revalidatePath("/dashboard");
+
+  return { ok: true, errors: [], requestId: newRequest.id };
+}
+
+
+export async function createRequest(formData: FormData) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) redirect("/login");
+
+  const customer_name = String(formData.get("customer_name") ?? "").trim();
+  const project_details = String(formData.get("project_details") ?? "").trim();
+  const services_requested = readServices(formData);
+
+  // Client-side required prevents most cases, but server must still validate.
+  // Redirect back with a friendly message instead of throwing.
+  if (!customer_name) redirect(`/requests/new?err=${encodeURIComponent("Customer Name is required.")}`);
+  if (!project_details) redirect(`/requests/new?err=${encodeURIComponent("Project Details are required.")}`);
+  if (services_requested.length === 0) redirect(`/requests/new?err=${encodeURIComponent("Select at least one service.")}`);
+
+  // 1) Create the parent request and get its id back
+  const { data: newRequest, error: reqError } = await supabase
+    .from("requests")
+    .insert([
+      {
+        customer_name,
+        project_details,
+        services_requested,
+        overall_status: "New",
+        // legacy per-service columns stay in schema for now, but are not the source of truth
+        scan_status: "Not Started",
+        design_status: "Not Started",
+        print_status: "Not Started",
+      },
+    ])
+    .select("id")
+    .single();
+
+  if (reqError || !newRequest) {
+    redirect(`/requests/new?err=${encodeURIComponent(reqError?.message ?? "Failed to create request.")}`);
+  }
+
+  // 2) Create one service-step row per selected service
+  const sortOrder: Record<string, number> = {
+    "3D Scanning": 10,
+    "3D Design": 20,
+    "Contract Print": 30,
+  };
+
+  const serviceRows = services_requested.map((service_type) => ({
+    request_id: newRequest.id,
+    service_type,
+    step_status: "Not Started",
+    sort_order: sortOrder[service_type] ?? 0,
+  }));
+
+  const { error: svcError } = await supabase
+    .from("request_services")
+    .insert(serviceRows);
+
+  if (svcError) {
+    redirect(`/requests/new?err=${encodeURIComponent(svcError.message ?? "Failed to create request services.")}`);
+  }
   revalidatePath("/requests");
   revalidatePath("/dashboard");
 }
