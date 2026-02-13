@@ -254,10 +254,17 @@ export default function QuoteFormClient({
 
                     <label className="grid gap-1">
                         <span className="text-xs text-neutral-400">Request ID:</span>
+
+                        {/* Keep submitting job_name even when the visible input is disabled */}
+                        {fromRequest ? (
+                            <input type="hidden" name="job_name" value={initialJobName ?? ""} />
+                        ) : null}
+
                         <input
                             name="job_name"
                             required
                             defaultValue={initialJobName ?? ""}
+                            disabled={Boolean(fromRequest)}
                             className={`w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${fromRequest ? "opacity-80 cursor-not-allowed" : ""
                                 }`}
                         />
@@ -320,8 +327,7 @@ export default function QuoteFormClient({
                                     defaultValue="0"
                                     onChange={(e) => setPrintTimeHours(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setPrintTimeHours)}
-                                    className={`w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${fromRequest ? "opacity-80 cursor-not-allowed" : ""
-                                        }`}
+                                    className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                             </label>
                         </div>
@@ -358,8 +364,7 @@ export default function QuoteFormClient({
                                             defaultValue="0"
                                             onChange={(e) => setMaterial1Grams(toNum(e.target.value))}
                                             onBlur={(e) => coerceBlankNumberToZero(e, setMaterial1Grams)}
-                                            className={`w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${fromRequest ? "opacity-80 cursor-not-allowed" : ""
-                                                }`}
+                                            className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                         />
                                     </label>
                                 </div>
@@ -396,8 +401,7 @@ export default function QuoteFormClient({
                                             defaultValue="0"
                                             onChange={(e) => setMaterial2Grams(toNum(e.target.value))}
                                             onBlur={(e) => coerceBlankNumberToZero(e, setMaterial2Grams)}
-                                            className={`w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${fromRequest ? "opacity-80 cursor-not-allowed" : ""
-                                                }`}
+                                            className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                         />
                                     </label>
                                 </div>
@@ -414,8 +418,7 @@ export default function QuoteFormClient({
                                         defaultValue="0"
                                         onChange={(e) => setSupportRemovalTimeHrs(toNum(e.target.value))}
                                         onBlur={(e) => coerceBlankNumberToZero(e, setSupportRemovalTimeHrs)}
-                                        className={`w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${fromRequest ? "opacity-80 cursor-not-allowed" : ""
-                                            }`}
+                                        className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     />
                                 </label>
 
@@ -429,8 +432,7 @@ export default function QuoteFormClient({
                                         defaultValue="0"
                                         onChange={(e) => setSetupTimeHrs(toNum(e.target.value))}
                                         onBlur={(e) => coerceBlankNumberToZero(e, setSetupTimeHrs)}
-                                        className={`w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${fromRequest ? "opacity-80 cursor-not-allowed" : ""
-                                            }`}
+                                        className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     />
                                 </label>
 
@@ -444,8 +446,7 @@ export default function QuoteFormClient({
                                         defaultValue="0"
                                         onChange={(e) => setAdminTimeHrs(toNum(e.target.value))}
                                         onBlur={(e) => coerceBlankNumberToZero(e, setAdminTimeHrs)}
-                                        className={`w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${fromRequest ? "opacity-80 cursor-not-allowed" : ""
-                                            }`}
+                                        className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     />
                                 </label>
                             </div>
@@ -594,8 +595,7 @@ export default function QuoteFormClient({
                     <textarea
                         name="notes"
                         rows={4}
-                        className={`w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${fromRequest ? "opacity-80 cursor-not-allowed" : ""
-                            }`}
+                        className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="Any special considerations, assumptions, file notes, etc."
                     />
                 </label>

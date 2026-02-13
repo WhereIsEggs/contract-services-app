@@ -21,10 +21,13 @@ export default function AppShell({
     const onDashboard = pathname === "/dashboard";
     const onNewRequest = pathname === "/requests/new";
     const onQuoteTool = pathname === "/quotes/new";
+    const onQuotes = pathname === "/quotes";
 
     // Allow pages (like /requests/[id]) to force the sidebar highlight
     const navOverride = activeNav ?? null;
+
     const onQuoteToolFinal = navOverride ? navOverride === "quote_tool" : onQuoteTool;
+    const onQuotesFinal = navOverride ? navOverride === "quote_tool" : onQuotes;
     const onInProgress = pathname === "/requests" && searchParams.get("status") === "In Progress";
     const onCompleted = pathname === "/requests" && searchParams.get("status") === "Completed";
     const onLateJobs = pathname === "/requests" && searchParams.has("late");
@@ -84,6 +87,16 @@ export default function AppShell({
                                     }`}
                             >
                                 Quote Tool
+                            </Link>
+
+                            <Link
+                                href="/quotes"
+                                className={`block rounded-lg px-3 py-2 text-sm ${onQuotesFinal
+                                    ? "bg-neutral-900 text-white"
+                                    : "text-neutral-200 hover:bg-neutral-900 hover:text-white transition"
+                                    }`}
+                            >
+                                Quotes
                             </Link>
 
 
