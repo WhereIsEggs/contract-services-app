@@ -161,12 +161,24 @@ export default function QuoteFormClient({
         // T2 = SUM(Q2:S2)
         const T2_manufacturingCost = Q2_machineCost + R2_materialUseCost + S2_elecSpaceCost;
 
-        // W2 = J2*D12 + K2*D13 + L2*D15 + D2*D16*D17
-        const W2_laborFees =
+        // Labor rates:
+        // Your *_cost_rate settings appear to be BILLABLE (what the customer pays).
+        // Use internal_to_external_labor_ratio to estimate INTERNAL labor cost.
+        const laborRatio = getSetting("internal_to_external_labor_ratio", 1);
+
+        // Billable labor fees (customer-facing rates)
+        const W2_laborFees_billable =
             toNum(supportRemovalTimeHrs) * supportRemovalCostRate +
             toNum(setupTimeHrs) * machineSetupCostRate +
             toNum(adminTimeHrs) * adminFeesCostRate +
             toNum(printTimeHours) * monitoringTimePct * monitoringTimeCostRate;
+
+        // Internal labor cost (your cost basis)
+        const W2_laborCost_internal =
+            toNum(supportRemovalTimeHrs) * (supportRemovalCostRate * laborRatio) +
+            toNum(setupTimeHrs) * (machineSetupCostRate * laborRatio) +
+            toNum(adminTimeHrs) * (adminFeesCostRate * laborRatio) +
+            toNum(printTimeHours) * monitoringTimePct * (monitoringTimeCostRate * laborRatio);
 
         // U2 = T2*(1+failure)
         const U2_withFailRate = T2_manufacturingCost * (1 + defaultFailureRate);
@@ -174,12 +186,17 @@ export default function QuoteFormClient({
         // V (pre-tax manufacturing with sales markup): U * (1 + markup)
         const V_preTaxManufacturing = U2_withFailRate * (1 + preTaxSaleMarkup);
 
-        // X (total price, no discount/expedite): V + W
-        const X_totalNoDiscount = V_preTaxManufacturing + W2_laborFees;
+        // X (total price, no discount/expedite): keep existing behavior (billable labor added)
+        const X_totalNoDiscount = V_preTaxManufacturing + W2_laborFees_billable;
 
         // Discount / expedite pricing
         const discounted = X_totalNoDiscount * (1 - discountRate);
         const expedited = X_totalNoDiscount * (1 + expeditedUpcharge);
+
+        // Internal totals + profit
+        const internalCost = U2_withFailRate + W2_laborCost_internal;
+        const profit = X_totalNoDiscount - internalCost;
+        const marginPct = X_totalNoDiscount > 0 ? profit / X_totalNoDiscount : 0;
 
         const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -193,10 +210,16 @@ export default function QuoteFormClient({
             R2_materialUseCost: round2(R2_materialUseCost),
             S2_elecSpaceCost: round2(S2_elecSpaceCost),
             T2_manufacturingCost: round2(T2_manufacturingCost),
-            W2_laborFees: round2(W2_laborFees),
+            W2_laborFees_billable: round2(W2_laborFees_billable),
+            W2_laborCost_internal: round2(W2_laborCost_internal),
             U2_withFailRate: round2(U2_withFailRate),
             V_preTaxManufacturing: round2(V_preTaxManufacturing),
             X_totalNoDiscount: round2(X_totalNoDiscount),
+
+            internalCost: round2(internalCost),
+            profit: round2(profit),
+            marginPct, // keep as ratio (0.23 = 23%)
+
             discounted: round2(discounted),
             expedited: round2(expedited),
 
@@ -540,7 +563,7 @@ export default function QuoteFormClient({
 
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Labor fees</div>
-                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.W2_laborFees)}</div>
+                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.W2_laborFees_billable)}</div>
                                 <div className="text-xs text-neutral-500">
                                     support + setup + admin + monitoring
                                 </div>
@@ -556,7 +579,9 @@ export default function QuoteFormClient({
 
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Internal cost</div>
-                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.U2_withFailRate + preview.W2_laborFees)}</div>
+                                <div className="mt-1 text-lg font-semibold text-white">
+                                    {money(preview.U2_withFailRate + preview.W2_laborCost_internal)}
+                                </div>
                                 <div className="text-xs text-neutral-500">
                                     internal cost basis (materials + machine + labor allocation)
                                 </div>
@@ -570,6 +595,17 @@ export default function QuoteFormClient({
                                     markup {(preview.preTaxSaleMarkup * 100).toFixed(0)}%
                                 </div>
                             </div>
+
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                <div className="text-sm text-neutral-300">Profit / Margin</div>
+                                <div className="mt-1 text-lg font-semibold text-white">
+                                    {money(preview.profit)}
+                                </div>
+                                <div className="text-xs text-neutral-500">
+                                    margin {(preview.marginPct * 100).toFixed(1)}%
+                                </div>
+                            </div>
+
 
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Discounted / Expedited</div>

@@ -18,7 +18,7 @@ type RequestRow = {
 export default async function RequestsPage({
     searchParams,
 }: {
-    searchParams?: Promise<{ status?: string; late?: string }>;
+    searchParams?: Promise<{ status?: string; late?: string; q?: string }>;
 }) {
     const supabase = await createClient();
 
@@ -30,7 +30,8 @@ export default async function RequestsPage({
         redirect("/login");
     }
     const sp = await searchParams;
-    const { status: rawStatus, late } = sp ?? {};
+    const { status: rawStatus, late, q: rawQ } = sp ?? {};
+    const q = (rawQ ?? "").trim();
 
     const normalizedStatus = (rawStatus ?? "").trim().replace(/:$/, "");
     const allowedStatuses = new Set(["In Progress", "Completed"]);
@@ -54,7 +55,6 @@ export default async function RequestsPage({
     updated_at
   )
 `)
-        .order("created_at", { ascending: false })
         .limit(10);
 
     if (status === "In Progress") {
@@ -64,8 +64,14 @@ export default async function RequestsPage({
         query = query.eq("overall_status", status);
     }
 
-    // If no explicit status filter is set, treat /requests as the "New Requests" intake queue
-    if (!status && !late) {
+    if (q.length > 0) {
+        query = query.ilike("customer_name", `%${q}%`);
+    }
+
+
+    // If no explicit status filter is set, treat /requests as the "New Requests" intake queue,
+    // BUT if the user is searching, search across all statuses.
+    if (!status && !late && q.length === 0) {
         query = query.eq("overall_status", "New");
     }
 
@@ -78,7 +84,58 @@ export default async function RequestsPage({
             .neq("overall_status", "Completed");
     }
 
-    const { data, error } = await query.returns<RequestRow[]>();
+    const { data: rawData, error } = await query.returns<RequestRow[]>();
+
+    let data = rawData ?? [];
+
+    // Only apply the smart queue sort on the In Progress view
+    if (status === "In Progress") {
+        data = data.slice().sort((a: any, b: any) => {
+            const aSteps = Array.isArray(a.request_services)
+                ? (a.request_services as any[]).slice().sort((x, y) => (x.sort_order ?? 0) - (y.sort_order ?? 0))
+                : [];
+            const bSteps = Array.isArray(b.request_services)
+                ? (b.request_services as any[]).slice().sort((x, y) => (x.sort_order ?? 0) - (y.sort_order ?? 0))
+                : [];
+
+            const aActive = aSteps.some((s) => s.step_status === "In Progress");
+            const bActive = bSteps.some((s) => s.step_status === "In Progress");
+
+            if (aActive !== bActive) return aActive ? -1 : 1;
+
+            const aPaused = aSteps.some((s) => s.step_status === "Waiting");
+            const bPaused = bSteps.some((s) => s.step_status === "Waiting");
+
+            if (aPaused !== bPaused) return aPaused ? -1 : 1;
+
+            const aLast = Math.max(
+                Date.parse(a.created_at ?? "") || 0,
+                ...aSteps.map((s) =>
+                    Math.max(
+                        Date.parse(s.updated_at ?? "") || 0,
+                        Date.parse(s.started_at ?? "") || 0,
+                        Date.parse(s.paused_at ?? "") || 0,
+                        Date.parse(s.completed_at ?? "") || 0
+                    )
+                )
+            );
+
+            const bLast = Math.max(
+                Date.parse(b.created_at ?? "") || 0,
+                ...bSteps.map((s) =>
+                    Math.max(
+                        Date.parse(s.updated_at ?? "") || 0,
+                        Date.parse(s.started_at ?? "") || 0,
+                        Date.parse(s.paused_at ?? "") || 0,
+                        Date.parse(s.completed_at ?? "") || 0
+                    )
+                )
+            );
+
+            // Most recent activity first
+            return bLast - aLast;
+        });
+    }
     const listTitle = late ? "Late Jobs" : status ?? "Requests";
 
     return (
@@ -88,6 +145,43 @@ export default async function RequestsPage({
                     <h2 className="text-2xl font-semibold text-neutral-100">
                         {listTitle}
                     </h2>
+
+                    <form action="/requests" method="get" className="mt-4 flex items-center gap-2">
+                        {/* Preserve existing filters */}
+                        {status ? <input type="hidden" name="status" value={status} /> : null}
+                        {late ? <input type="hidden" name="late" value={late} /> : null}
+
+                        <input
+                            type="text"
+                            name="q"
+                            defaultValue={q}
+                            placeholder="Search customer name…"
+                            className="w-full max-w-md h-10 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+
+                        <button
+                            type="submit"
+                            className="inline-flex h-10 items-center justify-center rounded-md bg-neutral-800 px-4 text-sm font-medium text-neutral-100 hover:bg-neutral-700"
+                        >
+                            Search
+                        </button>
+
+                        {q.length > 0 ? (
+                            <Link
+                                href={
+                                    status
+                                        ? `/requests?status=${encodeURIComponent(status)}`
+                                        : late
+                                            ? `/requests?late=1`
+                                            : `/requests`
+                                }
+                                className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-800 bg-transparent px-4 text-sm font-medium text-neutral-200 hover:bg-neutral-900/60"
+                            >
+                                Clear
+                            </Link>
+                        ) : null}
+                    </form>
+
 
                     <div className="mt-4 border-b border-neutral-800" />
                 </div>
