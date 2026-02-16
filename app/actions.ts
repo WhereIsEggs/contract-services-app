@@ -182,7 +182,7 @@ export async function updateServiceStepStatus(
 
   if (!user) throw new Error("Not authenticated");
 
-  const allowed = new Set(["Not Started", "In Progress", "Completed"]);
+  const allowed = new Set(["Not Started", "Waiting", "In Progress", "Completed"]);
   if (!allowed.has(step_status)) throw new Error("Invalid step status");
 
   // 0) Get the parent request_id FIRST (reliable)
@@ -243,13 +243,15 @@ export async function updateServiceStepStatus(
   // 2) Update the selected service step
   const updatePayload: any = { step_status };
 
-  const { data: existingNotesRow } = await supabase
+  const { data: existingRow, error: existingRowError } = await supabase
     .from("request_services")
-    .select("notes")
+    .select("notes, started_at, paused_at, completed_at")
     .eq("id", serviceId)
     .single();
 
-  updatePayload.notes = existingNotesRow?.notes ?? "";
+  if (existingRowError) throw new Error(JSON.stringify(existingRowError));
+
+  updatePayload.notes = existingRow?.notes ?? "";
 
 
   if (typeof notes === "string" && notes.trim().length > 0) {
@@ -261,13 +263,25 @@ export async function updateServiceStepStatus(
       : entry;
   }
 
+  // Timestamp rules:
+  // - In Progress: set started_at ONLY if it's not already set (don't reset it on resume)
+  //              clear paused_at and completed_at
+  // - Waiting (Paused): set paused_at to now (leave started_at as-is)
+  // - Completed: set completed_at to now, clear paused_at
   if (step_status === "In Progress") {
-    updatePayload.started_at = new Date().toISOString();
+    updatePayload.started_at = existingRow?.started_at ?? new Date().toISOString();
+    updatePayload.paused_at = null;
     updatePayload.completed_at = null;
+  }
+
+  if (step_status === "Waiting") {
+    // mark a pause moment (started_at stays whatever it was)
+    updatePayload.paused_at = new Date().toISOString();
   }
 
   if (step_status === "Completed") {
     updatePayload.completed_at = new Date().toISOString();
+    updatePayload.paused_at = null;
   }
 
   const { error: stepError } = await supabase

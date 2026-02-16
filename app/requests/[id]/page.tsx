@@ -35,6 +35,7 @@ request_services (
   step_status,
   sort_order,
   started_at,
+  paused_at,
   completed_at,
   updated_at,
   notes
@@ -83,8 +84,12 @@ request_services (
         .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
 
     const activeStep = steps.find((s: any) => s.step_status === "In Progress") ?? null;
-    const firstNotStarted =
-        steps.find((s: any) => s.step_status === "Not Started" || s.step_status === "Waiting") ?? null;
+
+    // If a step is Waiting, we treat it as "Paused" (resume path), not "not started"
+    const pausedStep = steps.find((s: any) => s.step_status === "Waiting") ?? null;
+
+    // True "not started" means never started yet
+    const firstNotStarted = steps.find((s: any) => s.step_status === "Not Started") ?? null;
 
     return (
         <AppShell
@@ -93,7 +98,7 @@ request_services (
             activeNav={
                 request.overall_status === "Completed"
                     ? "completed"
-                    : request.overall_status === "In Progress"
+                    : request.overall_status === "In Progress" || request.overall_status === "Waiting"
                         ? "in_progress"
                         : "requests"
             }
@@ -174,45 +179,78 @@ request_services (
                                         <>
                                             {activeStep ? (
                                                 <>
-                                                    <form
-                                                        action={async () => {
-                                                            "use server";
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        {/* Pause */}
+                                                        <form
+                                                            action={async () => {
+                                                                "use server";
 
-                                                            if (!activeStep?.id) return;
+                                                                if (!activeStep?.id) return;
 
-                                                            // Complete the active step
-                                                            await updateServiceStepStatus(activeStep.id, "Completed");
+                                                                // Pause the active step (we'll treat this as "Waiting" for now)
+                                                                await updateServiceStepStatus(activeStep.id, "Waiting");
 
-                                                            // Keep overall status in sync (Completed if no more steps, else In Progress)
-                                                            const supabase = await createClient();
+                                                                // Set request to Waiting (paused at request level)
+                                                                const supabase = await createClient();
+                                                                const { error } = await supabase
+                                                                    .from("requests")
+                                                                    .update({ overall_status: "Waiting" })
+                                                                    .eq("id", id);
 
-                                                            const { data: remaining } = await supabase
-                                                                .from("request_services")
-                                                                .select("id")
-                                                                .eq("request_id", id)
-                                                                .neq("step_status", "Completed")
-                                                                .limit(1);
+                                                                if (error) throw new Error(error.message);
 
-                                                            const overall_status =
-                                                                (remaining ?? []).length === 0 ? "Completed" : "In Progress";
-
-                                                            const { error } = await supabase
-                                                                .from("requests")
-                                                                .update({ overall_status })
-                                                                .eq("id", id);
-
-                                                            if (error) throw new Error(error.message);
-
-                                                            redirect(`/requests/${id}`);
-                                                        }}
-                                                    >
-                                                        <button
-                                                            type="submit"
-                                                            className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-500"
+                                                                redirect(`/requests/${id}`);
+                                                            }}
                                                         >
-                                                            Complete {activeStep.service_type}
-                                                        </button>
-                                                    </form>
+                                                            <button
+                                                                type="submit"
+                                                                className="inline-flex h-10 items-center justify-center rounded-md bg-yellow-400 px-4 text-sm font-medium text-neutral-900 hover:bg-yellow-900"
+                                                            >
+                                                                Pause {activeStep.service_type}
+                                                            </button>
+                                                        </form>
+
+                                                        {/* Complete */}
+                                                        <form
+                                                            action={async () => {
+                                                                "use server";
+
+                                                                if (!activeStep?.id) return;
+
+                                                                // Complete the active step
+                                                                await updateServiceStepStatus(activeStep.id, "Completed");
+
+                                                                // Keep overall status in sync (Completed if no more steps, else In Progress)
+                                                                const supabase = await createClient();
+
+                                                                const { data: remaining } = await supabase
+                                                                    .from("request_services")
+                                                                    .select("id")
+                                                                    .eq("request_id", id)
+                                                                    .neq("step_status", "Completed")
+                                                                    .limit(1);
+
+                                                                const overall_status =
+                                                                    (remaining ?? []).length === 0 ? "Completed" : "In Progress";
+
+                                                                const { error } = await supabase
+                                                                    .from("requests")
+                                                                    .update({ overall_status })
+                                                                    .eq("id", id);
+
+                                                                if (error) throw new Error(error.message);
+
+                                                                redirect(`/requests/${id}`);
+                                                            }}
+                                                        >
+                                                            <button
+                                                                type="submit"
+                                                                className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-500"
+                                                            >
+                                                                Complete {activeStep.service_type}
+                                                            </button>
+                                                        </form>
+                                                    </div>
 
                                                     <ProgressUpdateToggle
                                                         initialNotes={activeStep.notes ?? null}
@@ -223,14 +261,15 @@ request_services (
                                                         }}
                                                     />
                                                 </>
-                                            ) : firstNotStarted ? (
+                                            ) : (pausedStep || firstNotStarted) ? (
                                                 <form
                                                     action={async () => {
                                                         "use server";
 
-                                                        if (!firstNotStarted?.id) return;
+                                                        const target = pausedStep ?? firstNotStarted;
+                                                        if (!target?.id) return;
 
-                                                        await updateServiceStepStatus(firstNotStarted.id, "In Progress");
+                                                        await updateServiceStepStatus(target.id, "In Progress");
 
                                                         const supabase = await createClient();
                                                         const { error } = await supabase
@@ -247,7 +286,9 @@ request_services (
                                                         type="submit"
                                                         className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-500"
                                                     >
-                                                        Start {firstNotStarted.service_type}
+                                                        {pausedStep
+                                                            ? `Resume ${pausedStep.service_type}`
+                                                            : `Start ${firstNotStarted!.service_type}`}
                                                     </button>
                                                 </form>
                                             ) : null}
@@ -264,30 +305,54 @@ request_services (
                                                 <div className="flex flex-col">
                                                     <span className="text-neutral-100">{svc.service_type}</span>
 
-                                                    {(svc.started_at || svc.completed_at || svc.updated_at) ? (
-                                                        <span className="mt-0.5 text-xs text-neutral-500">
-                                                            {svc.started_at ? `Started: ${new Date(svc.started_at).toLocaleString()}` : ""}
-                                                            {svc.started_at && svc.completed_at ? " • " : ""}
-                                                            {svc.completed_at ? `Completed: ${new Date(svc.completed_at).toLocaleString()}` : ""}
-                                                            {svc.started_at && svc.completed_at ? (() => {
-                                                                const ms =
-                                                                    new Date(svc.completed_at).getTime() - new Date(svc.started_at).getTime();
-                                                                const mins = Math.max(0, Math.round(ms / 60000));
-                                                                const h = Math.floor(mins / 60);
-                                                                const m = mins % 60;
-                                                                const label = h > 0 ? `${h}h ${m}m` : `${m}m`;
-                                                                return ` • Duration: ${label}`;
-                                                            })() : ""}
-                                                            {svc.updated_at ? ` • Last updated: ${new Date(svc.updated_at).toLocaleString()}` : ""}
-                                                        </span>
+                                                    {(svc.started_at || svc.step_status === "Waiting" || svc.completed_at) ? (
+                                                        <div className="mt-1 flex flex-col gap-0.5 text-xs text-neutral-500">
+                                                            {svc.started_at ? (
+                                                                <div>
+                                                                    Started:{" "}
+                                                                    {new Date(svc.started_at).toLocaleString(undefined, {
+                                                                        dateStyle: "medium",
+                                                                        timeStyle: "short",
+                                                                    })}
+                                                                </div>
+                                                            ) : null}
+
+                                                            {svc.step_status === "Waiting" ? (
+                                                                <div>
+                                                                    Paused:{" "}
+                                                                    {svc.paused_at
+                                                                        ? new Date(svc.paused_at).toLocaleString(undefined, {
+                                                                            dateStyle: "medium",
+                                                                            timeStyle: "short",
+                                                                        })
+                                                                        : "—"}
+                                                                </div>
+                                                            ) : null}
+
+                                                            {svc.completed_at ? (
+                                                                <div>
+                                                                    Completed:{" "}
+                                                                    {new Date(svc.completed_at).toLocaleString(undefined, {
+                                                                        dateStyle: "medium",
+                                                                        timeStyle: "short",
+                                                                    })}
+                                                                </div>
+                                                            ) : null}
+                                                        </div>
                                                     ) : null}
                                                 </div>
 
                                                 {/* Right column: status pill (top-right) */}
                                                 {svc.step_status !== "In Progress" ? (
-                                                    <span className="col-start-2 row-start-1 self-start justify-self-end text-xs rounded-full border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-300">
-                                                        {svc.step_status}
-                                                    </span>
+                                                    svc.step_status === "Waiting" ? (
+                                                        <span className="col-start-2 row-start-1 self-start justify-self-end text-xs rounded-full border border-amber-700/60 bg-amber-950/30 px-2 py-1 text-amber-200">
+                                                            Paused
+                                                        </span>
+                                                    ) : (
+                                                        <span className="col-start-2 row-start-1 self-start justify-self-end text-xs rounded-full border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-300">
+                                                            {svc.step_status}
+                                                        </span>
+                                                    )
                                                 ) : (
                                                     <span className="col-start-2 row-start-1 self-start justify-self-end text-xs text-neutral-500"></span>
                                                 )}
@@ -312,9 +377,11 @@ request_services (
                             <div>
                                 {activeStep
                                     ? `${activeStep.service_type} In Progress`
-                                    : firstNotStarted
-                                        ? `Waiting to Start ${firstNotStarted.service_type}`
-                                        : request.overall_status}
+                                    : pausedStep
+                                        ? `${pausedStep.service_type} Paused`
+                                        : firstNotStarted
+                                            ? `Waiting to Start ${firstNotStarted.service_type}`
+                                            : request.overall_status}
                             </div>
                         </div>
 

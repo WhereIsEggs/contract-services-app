@@ -47,13 +47,20 @@ export default async function RequestsPage({
   request_services (
     service_type,
     step_status,
-    sort_order
+    sort_order,
+    started_at,
+    paused_at,
+    completed_at,
+    updated_at
   )
 `)
         .order("created_at", { ascending: false })
         .limit(10);
 
-    if (status) {
+    if (status === "In Progress") {
+        // Treat paused requests (overall_status = Waiting) as part of the In Progress queue
+        query = query.in("overall_status", ["In Progress", "Waiting"]);
+    } else if (status) {
         query = query.eq("overall_status", status);
     }
 
@@ -156,19 +163,57 @@ export default async function RequestsPage({
 
                                         <div className="flex items-center gap-3">
                                             <span
-                                                title={`Status: ${req.overall_status}`}
-                                                className="inline-flex shrink-0 items-center justify-center text-xs leading-none rounded-full px-2 py-1 border bg-neutral-800 text-neutral-300 border-neutral-700"
+                                                title={(() => {
+                                                    const steps = Array.isArray((req as any).request_services)
+                                                        ? ((req as any).request_services as any[])
+                                                        : [];
+
+                                                    const paused = steps.find((s) => s.step_status === "Waiting");
+
+                                                    if (paused?.paused_at) {
+                                                        const dt = new Date(paused.paused_at);
+                                                        const date = dt.toLocaleDateString(undefined, {
+                                                            month: "short",
+                                                            day: "numeric",
+                                                            year: "numeric",
+                                                        });
+                                                        const time = dt.toLocaleTimeString(undefined, {
+                                                            hour: "numeric",
+                                                            minute: "2-digit",
+                                                        });
+
+                                                        return `Paused ${date} at ${time}`;
+                                                    }
+
+                                                    return `Status: ${req.overall_status}`;
+                                                })()}
+                                                className={(() => {
+                                                    const steps = Array.isArray((req as any).request_services)
+                                                        ? ((req as any).request_services as any[])
+                                                        : [];
+                                                    const hasPaused = steps.some((s) => s.step_status === "Waiting");
+
+                                                    return hasPaused
+                                                        ? "inline-flex shrink-0 items-center justify-center text-xs leading-none rounded-full px-2 py-1 border border-amber-700/60 bg-amber-950/30 text-amber-200"
+                                                        : "inline-flex shrink-0 items-center justify-center text-xs leading-none rounded-full px-2 py-1 border bg-neutral-800 text-neutral-300 border-neutral-700";
+                                                })()}
                                             >
                                                 {(() => {
                                                     const steps = Array.isArray((req as any).request_services)
-                                                        ? ((req as any).request_services as any[]).slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+                                                        ? ((req as any).request_services as any[])
+                                                            .slice()
+                                                            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
                                                         : [];
 
                                                     const active = steps.find((s) => s.step_status === "In Progress");
-                                                    const next = steps.find((s) => s.step_status === "Not Started" || s.step_status === "Waiting");
+                                                    const paused = steps.find((s) => s.step_status === "Waiting");
+                                                    const next = steps.find((s) => s.step_status === "Not Started");
 
                                                     if (active) return `${active.service_type} In Progress`;
-                                                    if (req.overall_status === "In Progress" && next) return `Waiting to Start ${next.service_type}`;
+                                                    if (paused) return `${paused.service_type} Paused`;
+                                                    if ((req.overall_status === "In Progress" || req.overall_status === "Waiting") && next)
+                                                        return `Waiting to Start ${next.service_type}`;
+
                                                     return req.overall_status;
                                                 })()}
                                             </span>

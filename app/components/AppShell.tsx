@@ -86,19 +86,8 @@ export default function AppShell({
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white transition"
                                     }`}
                             >
-                                Quote Tool
+                                New Quote
                             </Link>
-
-                            <Link
-                                href="/quotes"
-                                className={`block rounded-lg px-3 py-2 text-sm ${onQuotesFinal
-                                    ? "bg-neutral-900 text-white"
-                                    : "text-neutral-200 hover:bg-neutral-900 hover:text-white transition"
-                                    }`}
-                            >
-                                Quotes
-                            </Link>
-
 
                             <Link
                                 href="/requests"
@@ -141,12 +130,16 @@ export default function AppShell({
                                 Late Jobs
                             </Link>
 
-                            <span className="rounded-md px-3 py-2 text-neutral-500 cursor-not-allowed opacity-60">
-                                Filters (soon)
-                            </span>
-                            <span className="rounded-md px-3 py-2 text-neutral-500 cursor-not-allowed opacity-60">
-                                Activity (soon)
-                            </span>
+                            <Link
+                                href="/quotes"
+                                className={`block rounded-lg px-3 py-2 text-sm ${onQuotesFinal
+                                    ? "bg-neutral-900 text-white"
+                                    : "text-neutral-200 hover:bg-neutral-900 hover:text-white transition"
+                                    }`}
+                            >
+                                Quotes
+                            </Link>
+
                             <Link
                                 href="/settings"
                                 className="rounded-md px-3 py-2 text-neutral-200 hover:bg-neutral-900 hover:text-white"
