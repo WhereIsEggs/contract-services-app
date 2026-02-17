@@ -220,8 +220,7 @@ export async function updateServiceStepStatus(
     }
   }
 
-
-  // 1) Guard: only ONE step can be In Progress at a time for a given request
+  // 2) Guard: only ONE step can be In Progress at a time for a given request
   if (step_status === "In Progress") {
     const { data: existingActive, error: activeError } = await supabase
       .from("request_services")
@@ -238,9 +237,7 @@ export async function updateServiceStepStatus(
     }
   }
 
-
-
-  // 2) Update the selected service step
+  // 3) Update the selected service step
   const updatePayload: any = { step_status };
 
   const { data: existingRow, error: existingRowError } = await supabase
@@ -253,7 +250,6 @@ export async function updateServiceStepStatus(
 
   updatePayload.notes = existingRow?.notes ?? "";
 
-
   if (typeof notes === "string" && notes.trim().length > 0) {
     const timestamp = new Date().toLocaleString();
     const entry = `[${timestamp}] ${notes.trim()}`;
@@ -265,21 +261,16 @@ export async function updateServiceStepStatus(
 
   // Timestamp rules:
   // - In Progress: set started_at ONLY if it's not already set (don't reset it on resume)
-  //              clear paused_at and completed_at
+  //               clear paused_at and completed_at
   // - Waiting (Paused): set paused_at to now (leave started_at as-is)
   // - Completed: set completed_at to now, clear paused_at
   if (step_status === "In Progress") {
     updatePayload.started_at = existingRow?.started_at ?? new Date().toISOString();
     updatePayload.paused_at = null;
     updatePayload.completed_at = null;
-  }
-
-  if (step_status === "Waiting") {
-    // mark a pause moment (started_at stays whatever it was)
+  } else if (step_status === "Waiting") {
     updatePayload.paused_at = new Date().toISOString();
-  }
-
-  if (step_status === "Completed") {
+  } else if (step_status === "Completed") {
     updatePayload.completed_at = new Date().toISOString();
     updatePayload.paused_at = null;
   }
@@ -291,42 +282,38 @@ export async function updateServiceStepStatus(
 
   if (stepError) throw new Error(JSON.stringify(stepError));
 
-  // 3) If moved to In Progress, set overall_status to reflect the active service
-  if (step_status === "In Progress") {
-    const { error: reqError } = await supabase
-      .from("requests")
-      .update({ overall_status: "In Progress" })
-      .eq("id", svcRow.request_id);
-
-    if (reqError) throw new Error(JSON.stringify(reqError));
-  }
-
-  // 3b) If this step was set to Completed, and ALL steps for the request are Completed,
-  // then set the parent request to Completed.
-  if (step_status === "Completed") {
-    const { data: allSteps, error: stepsError } = await supabase
+  // 4) Sync request overall_status based on current step states
+  {
+    const { data: steps, error: stepsError } = await supabase
       .from("request_services")
       .select("step_status")
       .eq("request_id", svcRow.request_id);
 
     if (stepsError) throw new Error(JSON.stringify(stepsError));
 
-    const allCompleted =
-      (allSteps ?? []).length > 0 &&
-      (allSteps ?? []).every((s: any) => s.step_status === "Completed");
+    const list = steps ?? [];
+    const anyInProgress = list.some((s: any) => s.step_status === "In Progress");
+    const anyWaiting = list.some((s: any) => s.step_status === "Waiting");
+    const allCompleted = list.length > 0 && list.every((s: any) => s.step_status === "Completed");
 
-    if (allCompleted) {
-      const { error: reqDoneError } = await supabase
+    let nextOverall: string | null = null;
+
+    if (allCompleted) nextOverall = "Completed";
+    else if (anyInProgress) nextOverall = "In Progress";
+    else if (anyWaiting) nextOverall = "Waiting";
+    else nextOverall = null; // don't force "New" here (avoid guessing)
+
+    if (nextOverall) {
+      const { error: reqError } = await supabase
         .from("requests")
-        .update({ overall_status: "Completed" })
+        .update({ overall_status: nextOverall })
         .eq("id", svcRow.request_id);
 
-      if (reqDoneError) throw new Error(JSON.stringify(reqDoneError));
+      if (reqError) throw new Error(JSON.stringify(reqError));
     }
   }
 
-
-  // 4) Refresh pages that display request/service data
+  // 5) Refresh pages that display request/service data
   revalidatePath("/requests");
   revalidatePath("/dashboard");
   revalidatePath(`/requests/${svcRow.request_id}`);

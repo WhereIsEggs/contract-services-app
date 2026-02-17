@@ -268,27 +268,33 @@ async function createQuote(formData: FormData) {
             settings.has(key) ? (settings.get(key) as number) : fallback;
 
         // Defaults (no UI dropdowns)
-        const defaultFailureRate = getSetting("default_failure_rate", 0.65); // I2
+        const defaultFailureRate = getSetting("default_failure_rate", 0.65);
 
         // Rates used in your formulas
-        const machineCostRate = getSetting("machine_cost_rate", 0); // D9
-        const electricityCostRate = getSetting("electricity_cost_rate", 0); // D10
+        const machineCostRate = getSetting("machine_cost_rate", 0);
+        const electricityCostRate = getSetting("electricity_cost_rate", 0);
         const spaceConsumablesCostRate = getSetting(
             "space_consumables_cost_rate",
             0
-        ); // D11
+        );
 
-        const supportRemovalCostRate = getSetting("support_removal_cost_rate", 0); // D12
-        const machineSetupCostRate = getSetting("machine_setup_cost_rate", 0); // D13
-        const adminFeesCostRate = getSetting("admin_fees_cost_rate", 0); // D15
+        const supportRemovalBillableRate = getSetting("support_removal_billable_rate", 0);
+        const supportRemovalInternalRate = getSetting("support_removal_internal_rate", 0);
 
-        const monitoringTimePct = getSetting("monitoring_time_pct", 0); // D16
-        const monitoringTimeCostRate = getSetting("monitoring_time_cost_rate", 0); // D17
+        const machineSetupBillableRate = getSetting("machine_setup_billable_rate", 0);
+        const machineSetupInternalRate = getSetting("machine_setup_internal_rate", 0);
+
+        const adminFeesBillableRate = getSetting("admin_fees_billable_rate", 0);
+        const adminFeesInternalRate = getSetting("admin_fees_internal_rate", 0);
+
+        const monitoringTimePct = getSetting("monitoring_time_pct", 0);
+        const monitoringBillableRate = getSetting("monitoring_billable_rate", 0);
+        const monitoringInternalRate = getSetting("monitoring_internal_rate", 0);
 
         const internalToExternalLaborRatio = getSetting(
             "internal_to_external_labor_ratio",
             0
-        ); // D21
+        );
 
         // =========================
         // 1) Insert quote header
@@ -346,37 +352,43 @@ async function createQuote(formData: FormData) {
             const rate1 = material1_id ? rateById.get(material1_id) ?? 0 : 0;
             const rate2 = material2_id ? rateById.get(material2_id) ?? 0 : 0;
 
-            // Q2 = D2 * machineCostRate
             const Q2_machineCost = print_time_hours * machineCostRate;
 
-            // R2 = (lbs1*rate1 + lbs2*rate2) * 1.65
             const R2_materialUseCost = (lbs1 * rate1 + lbs2 * rate2) * 1.65;
 
-            // S2 = D2*(electricity + space/consumables)
             const S2_elecSpaceCost =
                 print_time_hours * (electricityCostRate + spaceConsumablesCostRate);
 
-            // T2 = Q2 + R2 + S2
             const T2_manufacturingCost =
                 Q2_machineCost + R2_materialUseCost + S2_elecSpaceCost;
 
-            // W2 (labor fees) — you’re not collecting J/K/L yet, so default to 0 for now
             const J2_supportRemovalTime = support_removal_hours;
             const K2_setupTime = setup_hours;
             const L2_adminTime = admin_hours;
 
-            const W2_laborFees =
-                J2_supportRemovalTime * supportRemovalCostRate +
-                K2_setupTime * machineSetupCostRate +
-                L2_adminTime * adminFeesCostRate +
-                print_time_hours * monitoringTimePct * monitoringTimeCostRate;
+            // ===============================
+            // BILLABLE LABOR (customer-facing)
+            // ===============================
+            const W2_laborFees_billable =
+                J2_supportRemovalTime * supportRemovalBillableRate +
+                K2_setupTime * machineSetupBillableRate +
+                L2_adminTime * adminFeesBillableRate +
+                print_time_hours * monitoringTimePct * monitoringBillableRate;
 
-            // U2 = T2*(1+failureRate)
+            // ===============================
+            // INTERNAL LABOR (your real cost)
+            // ===============================
+            const W2_laborCost_internal =
+                J2_supportRemovalTime * supportRemovalInternalRate +
+                K2_setupTime * machineSetupInternalRate +
+                L2_adminTime * adminFeesInternalRate +
+                print_time_hours * monitoringTimePct * monitoringInternalRate;
+
             const U2_withFailRate = T2_manufacturingCost * (1 + defaultFailureRate);
 
-            // V2 = U2 + (W2 * internalToExternalLaborRatio)
-            const V2_totalWithExternalLabor =
-                U2_withFailRate + W2_laborFees * internalToExternalLaborRatio;
+            // Internal total cost basis (manufacturing w/ failure + INTERNAL labor)
+            const V2_internalTotalCost =
+                U2_withFailRate + W2_laborCost_internal;
 
             roundedContractCalc = {
                 // inputs / lookups
@@ -393,9 +405,9 @@ async function createQuote(formData: FormData) {
                 R2_materialUseCost: round2(R2_materialUseCost),
                 S2_elecSpaceCost: round2(S2_elecSpaceCost),
                 T2_manufacturingCost: round2(T2_manufacturingCost),
-                W2_laborFees: round2(W2_laborFees),
-                U2_withFailRate: round2(U2_withFailRate),
-                V2_totalWithExternalLabor: round2(V2_totalWithExternalLabor),
+                W2_laborFees_billable: round2(W2_laborFees_billable),
+                W2_laborCost_internal: round2(W2_laborCost_internal), U2_withFailRate: round2(U2_withFailRate),
+                V2_internalTotalCost: round2(V2_internalTotalCost),
             };
         }
 

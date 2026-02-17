@@ -130,12 +130,18 @@ export default function QuoteFormClient({
         const electricityCostRate = getSetting("electricity_cost_rate", 0); // D10
         const spaceConsumablesCostRate = getSetting("space_consumables_cost_rate", 0); // D11
 
-        const supportRemovalCostRate = getSetting("support_removal_cost_rate", 0); // D12
-        const machineSetupCostRate = getSetting("machine_setup_cost_rate", 0); // D13
-        const adminFeesCostRate = getSetting("admin_fees_cost_rate", 0); // D15
+        const supportRemovalBillableRate = getSetting("support_removal_billable_rate", 0);
+        const supportRemovalInternalRate = getSetting("support_removal_internal_rate", 0);
 
-        const monitoringTimePct = getSetting("monitoring_time_pct", 0); // D16
-        const monitoringTimeCostRate = getSetting("monitoring_time_cost_rate", 0); // D17
+        const machineSetupBillableRate = getSetting("machine_setup_billable_rate", 0);
+        const machineSetupInternalRate = getSetting("machine_setup_internal_rate", 0);
+
+        const adminFeesBillableRate = getSetting("admin_fees_billable_rate", 0);
+        const adminFeesInternalRate = getSetting("admin_fees_internal_rate", 0);
+
+        const monitoringTimePct = getSetting("monitoring_time_pct", 0);
+        const monitoringBillableRate = getSetting("monitoring_billable_rate", 0);
+        const monitoringInternalRate = getSetting("monitoring_internal_rate", 0);
 
         const preTaxSaleMarkup = getSetting("pre_tax_sale_markup", 0.65); // D18
         const discountRate = getSetting("discount_rate", 0.1); // D19
@@ -161,24 +167,19 @@ export default function QuoteFormClient({
         // T2 = SUM(Q2:S2)
         const T2_manufacturingCost = Q2_machineCost + R2_materialUseCost + S2_elecSpaceCost;
 
-        // Labor rates:
-        // Your *_cost_rate settings appear to be BILLABLE (what the customer pays).
-        // Use internal_to_external_labor_ratio to estimate INTERNAL labor cost.
-        const laborRatio = getSetting("internal_to_external_labor_ratio", 1);
-
         // Billable labor fees (customer-facing rates)
         const W2_laborFees_billable =
-            toNum(supportRemovalTimeHrs) * supportRemovalCostRate +
-            toNum(setupTimeHrs) * machineSetupCostRate +
-            toNum(adminTimeHrs) * adminFeesCostRate +
-            toNum(printTimeHours) * monitoringTimePct * monitoringTimeCostRate;
+            toNum(supportRemovalTimeHrs) * supportRemovalBillableRate +
+            toNum(setupTimeHrs) * machineSetupBillableRate +
+            toNum(adminTimeHrs) * adminFeesBillableRate +
+            toNum(printTimeHours) * monitoringTimePct * monitoringBillableRate;
 
         // Internal labor cost (your cost basis)
         const W2_laborCost_internal =
-            toNum(supportRemovalTimeHrs) * (supportRemovalCostRate * laborRatio) +
-            toNum(setupTimeHrs) * (machineSetupCostRate * laborRatio) +
-            toNum(adminTimeHrs) * (adminFeesCostRate * laborRatio) +
-            toNum(printTimeHours) * monitoringTimePct * (monitoringTimeCostRate * laborRatio);
+            toNum(supportRemovalTimeHrs) * supportRemovalInternalRate +
+            toNum(setupTimeHrs) * machineSetupInternalRate +
+            toNum(adminTimeHrs) * adminFeesInternalRate +
+            toNum(printTimeHours) * monitoringTimePct * monitoringInternalRate;
 
         // U2 = T2*(1+failure)
         const U2_withFailRate = T2_manufacturingCost * (1 + defaultFailureRate);
