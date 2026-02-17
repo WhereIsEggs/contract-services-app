@@ -209,9 +209,15 @@ async function createQuote(formData: FormData) {
             String(formData.get("material2_grams") ?? "0").trim()
         );
 
-        const support_removal_hours = Number(String(formData.get("support_removal_hours") ?? "0").trim());
-        const setup_hours = Number(String(formData.get("setup_hours") ?? "0").trim());
-        const admin_hours = Number(String(formData.get("admin_hours") ?? "0").trim());
+        const support_removal_hours = Number(
+            String(formData.get("support_removal_time_hours") ?? "0").trim()
+        );
+        const setup_hours = Number(
+            String(formData.get("setup_time_hours") ?? "0").trim()
+        );
+        const admin_hours = Number(
+            String(formData.get("admin_time_hours") ?? "0").trim()
+        );
 
         if (!Number.isFinite(support_removal_hours) || support_removal_hours < 0) throw new Error("Invalid support removal hours.");
         if (!Number.isFinite(setup_hours) || setup_hours < 0) throw new Error("Invalid setup hours.");
@@ -290,11 +296,6 @@ async function createQuote(formData: FormData) {
         const monitoringTimePct = getSetting("monitoring_time_pct", 0);
         const monitoringBillableRate = getSetting("monitoring_billable_rate", 0);
         const monitoringInternalRate = getSetting("monitoring_internal_rate", 0);
-
-        const internalToExternalLaborRatio = getSetting(
-            "internal_to_external_labor_ratio",
-            0
-        );
 
         // =========================
         // 1) Insert quote header
@@ -398,7 +399,6 @@ async function createQuote(formData: FormData) {
                 rate2: round2(rate2),
 
                 defaultFailureRate: round2(defaultFailureRate),
-                internalToExternalLaborRatio: round2(internalToExternalLaborRatio),
 
                 // calc pieces
                 Q2_machineCost: round2(Q2_machineCost),
@@ -406,7 +406,8 @@ async function createQuote(formData: FormData) {
                 S2_elecSpaceCost: round2(S2_elecSpaceCost),
                 T2_manufacturingCost: round2(T2_manufacturingCost),
                 W2_laborFees_billable: round2(W2_laborFees_billable),
-                W2_laborCost_internal: round2(W2_laborCost_internal), U2_withFailRate: round2(U2_withFailRate),
+                W2_laborCost_internal: round2(W2_laborCost_internal),
+                U2_withFailRate: round2(U2_withFailRate),
                 V2_internalTotalCost: round2(V2_internalTotalCost),
             };
         }
