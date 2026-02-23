@@ -5,7 +5,32 @@ import { notFound, redirect } from "next/navigation";
 import ProgressUpdateToggle from "@/app/components/ProgressUpdateToggle";
 import LinkedQuoteSelector from "@/app/requests/LinkedQuoteSelector";
 
+function toNum(v: any) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+}
 
+function fmtMoney(n: any) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return "—";
+    return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
+}
+
+function fmtHours(n: any) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return "—";
+    return `${v.toFixed(2)}h`;
+}
+
+// Map request_services label -> quote_items service_type
+function quoteKeyForServiceLabel(label: string): string | null {
+    const t = String(label ?? "").trim();
+    if (t === "Contract Print" || t === "Contract Printing") return "CONTRACT_PRINTING";
+    if (t === "3D Scanning") return "3D_SCANNING";
+    if (t === "3D Design") return "3D_DESIGN";
+    if (t === "Material Testing") return "MATERIAL_TESTING";
+    return null;
+}
 
 export default async function RequestDetailPage({
     params,
@@ -21,39 +46,72 @@ export default async function RequestDetailPage({
         .from("requests")
         .select(
             `
+      id,
+      request_number,
+      customer_name,
+      created_at,
+      services_requested,
+      overall_status,
+      project_details,
+      quote_id,
+      request_services (
         id,
-        request_number,
-        customer_name,
-        created_at,
-        services_requested,
-        overall_status,
-        project_details,
-        quote_id,
-request_services (
-  id,
-  service_type,
-  step_status,
-  sort_order,
-  started_at,
-  paused_at,
-  completed_at,
-  updated_at,
-  notes
-)
-      `
+        service_type,
+        step_status,
+        sort_order,
+        started_at,
+        paused_at,
+        completed_at,
+        updated_at,
+        notes
+      )
+    `
         )
         .eq("id", id)
         .single();
 
     if (error || !request) notFound();
+    const overallStatus = String((request as any).overall_status ?? "");
+    // ============================
+    // Cost settings (rates live in DB)
+    // ============================
+    const { data: settingRows, error: settingErr } = await supabase
+        .from("cost_settings")
+        .select("key,value");
 
+    if (settingErr) throw new Error(settingErr.message);
+
+    const settings: Record<string, number> = Object.fromEntries(
+        (settingRows ?? []).map((r: any) => [String(r.key), Number(r.value)])
+    );
+
+    const getSetting = (key: string, fallback = 0) => {
+        const v = settings?.[key];
+        return Number.isFinite(v) ? Number(v) : fallback;
+    };
+
+    // Quote-item service_type -> settings keys
+    function billableRateForQuoteKey(quoteKey: string | null) {
+        if (quoteKey === "3D_SCANNING") return getSetting("scanning_billable_rate", 0);
+        if (quoteKey === "3D_DESIGN") return getSetting("design_billable_rate", 0);
+        if (quoteKey === "MATERIAL_TESTING") return getSetting("testing_billable_rate", 0);
+        return 0;
+    }
+
+    function internalRateForQuoteKey(quoteKey: string | null) {
+        if (quoteKey === "3D_SCANNING") return getSetting("scanning_internal_rate", 0);
+        if (quoteKey === "3D_DESIGN") return getSetting("design_internal_rate", 0);
+        if (quoteKey === "MATERIAL_TESTING") return getSetting("testing_internal_rate", 0);
+        return 0;
+    }
+    // Quotes dropdown
     const { data: recentQuotes, error: quotesError } = await supabase
         .from("quotes")
         .select("id,customer_name,job_name,created_at")
         .order("created_at", { ascending: false })
         .limit(50);
 
-    // Build a set of quote_ids already linked to ANY request
+    // quote_ids already linked to ANY request
     const { data: linkedRows, error: linkedError } = await supabase
         .from("requests")
         .select("quote_id")
@@ -62,41 +120,31 @@ request_services (
     const currentQuoteId = (request as any).quote_id as string | null;
 
     const linkedSet = new Set<string>(
-        (linkedRows ?? [])
-            .map((r: any) => r.quote_id)
-            .filter(Boolean)
+        (linkedRows ?? []).map((r: any) => r.quote_id).filter(Boolean)
     );
 
-    const availableQuotes =
-        linkedError
-            ? (recentQuotes ?? [])
-            : (recentQuotes ?? []).filter((q: any) => !linkedSet.has(q.id) || q.id === currentQuoteId);
+    const availableQuotes = linkedError
+        ? (recentQuotes ?? [])
+        : (recentQuotes ?? []).filter((q: any) => !linkedSet.has(q.id) || q.id === currentQuoteId);
 
-
-    // Normalize nested rows
+    // Normalize steps
     const serviceSteps = Array.isArray((request as any).request_services)
         ? (((request as any).request_services as any[]) ?? [])
         : [];
 
-    // Sort once, use everywhere
     const steps = serviceSteps
         .slice()
         .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
 
     const activeStep = steps.find((s: any) => s.step_status === "In Progress") ?? null;
-
-    // If a step is Waiting, we treat it as "Paused" (resume path), not "not started"
     const pausedStep = steps.find((s: any) => s.step_status === "Waiting") ?? null;
-
-    // True "not started" means never started yet
     const firstNotStarted = steps.find((s: any) => s.step_status === "Not Started") ?? null;
 
-    // ==========================================
-    // Completed view: Quoted vs Actual (snapshot)
-    // ==========================================
+    // ============================
+    // Quoted vs Actual (Completed)
+    // ============================
     const quoteId = (request as any).quote_id as string | null;
 
-    // Pull quote items (quoted baseline)
     const { data: quoteItems, error: qiErr } = quoteId
         ? await supabase
             .from("quote_items")
@@ -104,7 +152,9 @@ request_services (
             .eq("quote_id", quoteId)
         : { data: null as any, error: null as any };
 
-    // Pull actuals entered per service step
+    const qiList = quoteItems ?? [];
+    const qiByType = new Map<string, any>(qiList.map((q: any) => [String(q.service_type), q]));
+
     const stepIds = steps.map((s: any) => s.id).filter(Boolean);
 
     const { data: actualRows, error: actualErr } = stepIds.length
@@ -118,39 +168,56 @@ request_services (
         (actualRows ?? []).map((r: any) => [String(r.service_id), r])
     );
 
-    const qiList = quoteItems ?? [];
-    const qiByType = new Map<string, any>(
-        qiList.map((q: any) => [String(q.service_type), q])
+    // ---------------------------
+    // Material lookup (Quoted + Actual CP extras)
+    // ---------------------------
+    const quotedContractParams = (qiByType.get("CONTRACT_PRINTING")?.params ?? {}) as any;
+
+    const materialIdsForLookup = Array.from(
+        new Set(
+            [
+                quotedContractParams?.material1_id,
+                quotedContractParams?.material2_id,
+
+                ...(actualRows ?? [])
+                    .map((r: any) => r?.data?.contract_print ?? null)
+                    .flatMap((cp: any) => (cp ? [cp.extra_material1_id, cp.extra_material2_id] : [])),
+            ]
+                .filter(Boolean)
+                .map((x) => String(x))
+        )
     );
 
-    const qiContract = qiByType.get("CONTRACT_PRINTING") ?? null;
-    const qiScan = qiByType.get("3D_SCANNING") ?? null;
-    const qiDesign = qiByType.get("3D_DESIGN") ?? null;
-    const qiTest = qiByType.get("MATERIAL_TESTING") ?? null;
+    const { data: materialRows, error: materialLookupErr } = materialIdsForLookup.length
+        ? await supabase.from("material_costs").select("id,name,category").in("id", materialIdsForLookup)
+        : { data: [] as any[], error: null as any };
 
-    const contractParams = qiContract?.params ?? null;
-    const contractCalc = contractParams?.calc ?? null;
+    if (materialLookupErr) throw new Error(materialLookupErr.message);
 
-    const fmtMoney = (n: any) => {
-        const v = Number(n);
-        if (!Number.isFinite(v)) return "—";
-        return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
-    };
+    const materialNameById = new Map<string, string>(
+        (materialRows ?? []).map((m: any) => [
+            String(m.id),
+            `${m.category ? `${m.category} — ` : ""}${m.name}`,
+        ])
+    );
 
-    const fmtHours = (n: any) => {
-        const v = Number(n);
-        if (!Number.isFinite(v)) return "—";
-        return `${v.toFixed(2)}h`;
-    };
+    function materialLabelFromId(id: any) {
+        const key = String(id ?? "").trim();
+        if (!key) return "—";
+        return materialNameById.get(key) ?? "Unknown material";
+    }
 
+    // ============================
+    // Render
+    // ============================
     return (
         <AppShell
             title="Request Details"
             hideHeaderTitle
             activeNav={
-                request.overall_status === "Completed"
+                overallStatus === "Completed"
                     ? "completed"
-                    : request.overall_status === "In Progress" || request.overall_status === "Waiting"
+                    : overallStatus === "In Progress" || overallStatus === "Waiting"
                         ? "in_progress"
                         : "requests"
             }
@@ -165,7 +232,7 @@ request_services (
                     <div className="grid gap-4 text-sm text-neutral-200">
                         <div>
                             <span className="text-neutral-400">Customer</span>
-                            <div className="font-medium">{request.customer_name || "Unnamed customer"}</div>
+                            <div className="font-medium">{(request as any).customer_name || "Unnamed customer"}</div>
                         </div>
 
                         <div>
@@ -175,10 +242,9 @@ request_services (
                             </div>
                         </div>
 
-
                         <div>
                             <span className="text-neutral-400">Requested Services</span>
-                            <div>{(request.services_requested ?? []).join(", ") || "—"}</div>
+                            <div>{((request as any).services_requested ?? []).join(", ") || "—"}</div>
                         </div>
 
                         <div>
@@ -189,7 +255,6 @@ request_services (
                                     <div className="text-xs text-red-300">Could not load quotes: {quotesError.message}</div>
                                 ) : (
                                     <>
-                                        {/* Attach / change quote */}
                                         <LinkedQuoteSelector
                                             requestId={id}
                                             currentQuoteId={(request as any).quote_id ?? null}
@@ -201,17 +266,13 @@ request_services (
                                                 const quoteIdRaw = String(formData.get("quote_id") ?? "").trim();
                                                 const quote_id = quoteIdRaw.length ? quoteIdRaw : null;
 
-                                                const { error } = await supabase
-                                                    .from("requests")
-                                                    .update({ quote_id })
-                                                    .eq("id", id);
-
+                                                const { error } = await supabase.from("requests").update({ quote_id }).eq("id", id);
                                                 if (error) throw new Error(error.message);
 
                                                 redirect(`/requests/${id}`);
                                             }}
                                         />
-                                        {/* Quick link to view the quote list */}
+
                                         <div className="text-xs text-neutral-500">
                                             Tip: Open the Quote Tool in another tab to copy details. (Quote detail view comes later.)
                                         </div>
@@ -220,14 +281,13 @@ request_services (
                             </div>
                         </div>
 
-
                         <div>
                             <span className="text-neutral-400">Service Steps</span>
 
                             {steps.length > 0 ? (
                                 <div className="mt-2 grid gap-3">
                                     {/* Workflow buttons */}
-                                    {request.overall_status !== "Completed" ? (
+                                    {overallStatus !== "Completed" ? (
                                         <>
                                             {activeStep ? (
                                                 <>
@@ -239,10 +299,8 @@ request_services (
 
                                                                 if (!activeStep?.id) return;
 
-                                                                // Pause the active step (we'll treat this as "Waiting" for now)
                                                                 await updateServiceStepStatus(activeStep.id, "Waiting");
 
-                                                                // Set request to Waiting (paused at request level)
                                                                 const supabase = await createClient();
                                                                 const { error } = await supabase
                                                                     .from("requests")
@@ -269,12 +327,9 @@ request_services (
 
                                                                 if (!activeStep?.id) return;
 
-                                                                // Complete the active step
                                                                 await updateServiceStepStatus(activeStep.id, "Completed");
 
-                                                                // Keep overall status in sync (Completed if no more steps, else In Progress)
                                                                 const supabase = await createClient();
-
                                                                 const { data: remaining } = await supabase
                                                                     .from("request_services")
                                                                     .select("id")
@@ -282,12 +337,11 @@ request_services (
                                                                     .neq("step_status", "Completed")
                                                                     .limit(1);
 
-                                                                const overall_status =
-                                                                    (remaining ?? []).length === 0 ? "Completed" : "In Progress";
+                                                                const newOverall = (remaining ?? []).length === 0 ? "Completed" : "In Progress";
 
                                                                 const { error } = await supabase
                                                                     .from("requests")
-                                                                    .update({ overall_status })
+                                                                    .update({ overall_status: newOverall })
                                                                     .eq("id", id);
 
                                                                 if (error) throw new Error(error.message);
@@ -313,7 +367,7 @@ request_services (
                                                         }}
                                                     />
                                                 </>
-                                            ) : (pausedStep || firstNotStarted) ? (
+                                            ) : pausedStep || firstNotStarted ? (
                                                 <form
                                                     action={async () => {
                                                         "use server";
@@ -338,9 +392,7 @@ request_services (
                                                         type="submit"
                                                         className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-500"
                                                     >
-                                                        {pausedStep
-                                                            ? `Resume ${pausedStep.service_type}`
-                                                            : `Start ${firstNotStarted!.service_type}`}
+                                                        {pausedStep ? `Resume ${pausedStep.service_type}` : `Start ${firstNotStarted!.service_type}`}
                                                     </button>
                                                 </form>
                                             ) : null}
@@ -353,11 +405,10 @@ request_services (
                                                 key={svc.id}
                                                 className="grid grid-cols-[1fr_auto] gap-x-3 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-2"
                                             >
-                                                {/* Left column: service + timestamps */}
                                                 <div className="flex flex-col">
                                                     <span className="text-neutral-100">{svc.service_type}</span>
 
-                                                    {(svc.started_at || svc.step_status === "Waiting" || svc.completed_at) ? (
+                                                    {svc.started_at || svc.step_status === "Waiting" || svc.completed_at ? (
                                                         <div className="mt-1 flex flex-col gap-0.5 text-xs text-neutral-500">
                                                             {svc.started_at ? (
                                                                 <div>
@@ -394,7 +445,6 @@ request_services (
                                                     ) : null}
                                                 </div>
 
-                                                {/* Right column: status pill (top-right) */}
                                                 {svc.step_status !== "In Progress" ? (
                                                     svc.step_status === "Waiting" ? (
                                                         <span className="col-start-2 row-start-1 self-start justify-self-end text-xs rounded-full border border-amber-700/60 bg-amber-950/30 px-2 py-1 text-amber-200">
@@ -409,7 +459,6 @@ request_services (
                                                     <span className="col-start-2 row-start-1 self-start justify-self-end text-xs text-neutral-500"></span>
                                                 )}
 
-                                                {/* Full-width notes (only when NOT active) */}
                                                 {svc.step_status !== "In Progress" && svc.notes ? (
                                                     <div className="col-span-2 mt-2 rounded-md border border-neutral-800 bg-neutral-950/30 px-3 py-2 text-xs text-neutral-300 whitespace-pre-wrap">
                                                         {svc.notes}
@@ -425,9 +474,9 @@ request_services (
                         </div>
 
                         {/* =========================
-                           Completed Summary: Quoted vs Actual
-                        ========================== */}
-                        {request.overall_status === "Completed" ? (
+                Completed Summary: Quoted vs Actual
+            ========================== */}
+                        {overallStatus === "Completed" ? (
                             <div>
                                 <span className="text-neutral-400">Quoted vs Actual</span>
 
@@ -439,55 +488,63 @@ request_services (
                                         {!quoteId ? (
                                             <div className="mt-2 text-sm text-neutral-400">No quote linked.</div>
                                         ) : qiErr ? (
-                                            <div className="mt-2 text-sm text-red-300">
-                                                Failed to load quote items: {qiErr.message}
-                                            </div>
+                                            <div className="mt-2 text-sm text-red-300">Failed to load quote items: {qiErr.message}</div>
                                         ) : (
                                             <div className="mt-3 grid gap-3 text-sm text-neutral-200">
                                                 {steps.map((svc: any) => {
                                                     const t = String(svc.service_type ?? "").trim();
-
-                                                    // Map request_services label -> quote_items service_type
-                                                    let quoteKey: string | null = null;
-                                                    if (t === "Contract Print" || t === "Contract Printing") quoteKey = "CONTRACT_PRINTING";
-                                                    else if (t === "3D Scanning") quoteKey = "3D_SCANNING";
-                                                    else if (t === "3D Design") quoteKey = "3D_DESIGN";
-                                                    else if (t === "Material Testing") quoteKey = "MATERIAL_TESTING";
-
+                                                    const quoteKey = quoteKeyForServiceLabel(t);
                                                     const qi = quoteKey ? (qiByType.get(quoteKey) ?? null) : null;
+
                                                     const isContract = quoteKey === "CONTRACT_PRINTING";
                                                     const qp = qi?.params ?? null;
                                                     const qc = qp?.calc ?? null;
 
+                                                    const quoteTotal =
+                                                        toNum(qc?.V2_totalWithExternalLabor) ||
+                                                        toNum(qc?.total_with_external_labor) ||
+                                                        (toNum(qc?.U2_withFailRate) + toNum(qc?.W2_laborFees_billable));
+
+                                                    const hasMat1 = toNum(qp?.material1_grams) > 0 && String(qp?.material1_id ?? "").trim().length > 0;
+                                                    const hasMat2 = toNum(qp?.material2_grams) > 0 && String(qp?.material2_id ?? "").trim().length > 0;
+
+                                                    const materialsText = [hasMat1 ? `${materialLabelFromId(qp?.material1_id)}: ${toNum(qp?.material1_grams).toFixed(0)}g` : null,
+                                                    hasMat2 ? `${materialLabelFromId(qp?.material2_id)}: ${toNum(qp?.material2_grams).toFixed(0)}g` : null]
+                                                        .filter(Boolean)
+                                                        .join(", ");
+
                                                     return (
-                                                        <div
-                                                            key={svc.id}
-                                                            className="rounded-md border border-neutral-800 bg-neutral-950/30 p-3"
-                                                        >
+                                                        <div key={svc.id} className="rounded-md border border-neutral-800 bg-neutral-950/30 p-3">
                                                             <div className="font-medium text-neutral-100">{t}</div>
 
                                                             {isContract ? (
                                                                 qi ? (
                                                                     <div className="mt-2 grid gap-1">
                                                                         <div>
-                                                                            Print time:{" "}
-                                                                            <span className="text-neutral-100">{fmtHours(qi.print_time_hours)}</span>
+                                                                            Print time: <span className="text-neutral-100">{fmtHours(qi.print_time_hours)}</span>
                                                                         </div>
                                                                         <div>
-                                                                            Setup time:{" "}
-                                                                            <span className="text-neutral-100">{fmtHours(qp?.setup_hours)}</span>
+                                                                            Setup time: <span className="text-neutral-100">{fmtHours(qp?.setup_hours)}</span>
                                                                         </div>
                                                                         <div>
                                                                             Support removal time:{" "}
                                                                             <span className="text-neutral-100">{fmtHours(qp?.support_removal_hours)}</span>
                                                                         </div>
                                                                         <div>
-                                                                            Admin time:{" "}
-                                                                            <span className="text-neutral-100">{fmtHours(qp?.admin_hours)}</span>
+                                                                            Admin time: <span className="text-neutral-100">{fmtHours(qp?.admin_hours)}</span>
                                                                         </div>
+
+                                                                        {(hasMat1 || hasMat2) ? (
+                                                                            <div>
+                                                                                Materials: <span className="text-neutral-100">{materialsText || "—"}</span>
+                                                                            </div>
+                                                                        ) : null}
+
+                                                                        {/* separator below Admin time + materials */}
+                                                                        <div className="my-2 border-t border-neutral-800" />
+
                                                                         <div className="mt-1">
-                                                                            Billable labor:{" "}
-                                                                            <span className="text-neutral-100">{fmtMoney(qc?.W2_laborFees_billable)}</span>
+                                                                            Quote total: <span className="text-neutral-100">{fmtMoney(quoteTotal)}</span>
                                                                         </div>
                                                                         <div>
                                                                             Internal total cost:{" "}
@@ -500,12 +557,30 @@ request_services (
                                                             ) : (
                                                                 <div className="mt-2 grid gap-1">
                                                                     <div>
-                                                                        Quoted hours:{" "}
-                                                                        <span className="text-neutral-100">{fmtHours(qi?.labor_hours)}</span>
+                                                                        Quoted hours: <span className="text-neutral-100">{fmtHours(qi?.labor_hours)}</span>
                                                                     </div>
+
+                                                                    {qi ? (
+                                                                        <>
+                                                                            <div className="my-2 border-t border-neutral-800" />
+
+                                                                            <div>
+                                                                                Quote total:{" "}
+                                                                                <span className="text-neutral-100">
+                                                                                    {fmtMoney(toNum(qi.labor_hours) * billableRateForQuoteKey(quoteKey))}
+                                                                                </span>
+                                                                            </div>
+
+                                                                            <div>
+                                                                                Internal total cost:{" "}
+                                                                                <span className="text-neutral-100">
+                                                                                    {fmtMoney(toNum(qi.labor_hours) * internalRateForQuoteKey(quoteKey))}
+                                                                                </span>
+                                                                            </div>
+                                                                        </>
+                                                                    ) : null}
                                                                 </div>
-                                                            )}
-                                                        </div>
+                                                            )}                                                        </div>
                                                     );
                                                 })}
                                             </div>
@@ -517,22 +592,36 @@ request_services (
                                         <div className="text-sm font-medium text-neutral-100">Actual</div>
 
                                         {actualErr ? (
-                                            <div className="mt-2 text-sm text-red-300">
-                                                Failed to load service actuals: {actualErr.message}
-                                            </div>
+                                            <div className="mt-2 text-sm text-red-300">Failed to load service actuals: {actualErr.message}</div>
                                         ) : (
                                             <div className="mt-3 grid gap-3 text-sm text-neutral-200">
                                                 {steps.map((svc: any) => {
                                                     const ar = actualByServiceId.get(String(svc.id)) ?? null;
                                                     const cp = ar?.data?.contract_print ?? null;
+                                                    const cpCalc = cp?.calc_actual ?? null;
+
                                                     const t = String(svc.service_type ?? "").trim();
                                                     const isContract = t === "Contract Print" || t === "Contract Printing";
 
+                                                    const extraMaterialsText = (() => {
+                                                        if (!cp) return "—";
+
+                                                        const rows: { id: string; grams: number }[] = [];
+
+                                                        const id1 = String(cp.extra_material1_id ?? "").trim();
+                                                        const g1 = Number(cp.extra_material1_grams ?? 0);
+                                                        if (id1 && Number.isFinite(g1) && g1 > 0) rows.push({ id: id1, grams: g1 });
+
+                                                        const id2 = String(cp.extra_material2_id ?? "").trim();
+                                                        const g2 = Number(cp.extra_material2_grams ?? 0);
+                                                        if (id2 && Number.isFinite(g2) && g2 > 0) rows.push({ id: id2, grams: g2 });
+
+                                                        if (!rows.length) return "—";
+                                                        return rows.map((r) => `${materialLabelFromId(r.id)}: ${r.grams}g`).join(", ");
+                                                    })();
+
                                                     return (
-                                                        <div
-                                                            key={svc.id}
-                                                            className="rounded-md border border-neutral-800 bg-neutral-950/30 p-3"
-                                                        >
+                                                        <div key={svc.id} className="rounded-md border border-neutral-800 bg-neutral-950/30 p-3">
                                                             <div className="font-medium text-neutral-100">{t}</div>
 
                                                             {!isContract ? (
@@ -550,38 +639,40 @@ request_services (
                                                                 <div className="mt-2 grid gap-1">
                                                                     <div>
                                                                         Restarted:{" "}
-                                                                        <span className="text-neutral-100">
-                                                                            {cp ? (cp.restarted ? "Yes" : "No") : "—"}
-                                                                        </span>
+                                                                        <span className="text-neutral-100">{cp ? (cp.restarted ? "Yes" : "No") : "—"}</span>
                                                                     </div>
+
                                                                     <div>
                                                                         Extra machine time:{" "}
                                                                         <span className="text-neutral-100">
                                                                             {cp ? fmtHours(cp.extra_machine_hours) : "—"}
                                                                         </span>
                                                                     </div>
+
                                                                     <div>
                                                                         Extra setup time:{" "}
-                                                                        <span className="text-neutral-100">
-                                                                            {cp ? fmtHours(cp.extra_setup_hours) : "—"}
-                                                                        </span>
+                                                                        <span className="text-neutral-100">{cp ? fmtHours(cp.extra_setup_hours) : "—"}</span>
                                                                     </div>
+
                                                                     <div>
                                                                         Extra support removal time:{" "}
                                                                         <span className="text-neutral-100">
                                                                             {cp ? fmtHours(cp.extra_support_removal_hours) : "—"}
                                                                         </span>
                                                                     </div>
+
                                                                     <div>
-                                                                        Extra materials:{" "}
-                                                                        <span className="text-neutral-100">
-                                                                            {cp?.extra_materials?.length
-                                                                                ? cp.extra_materials
-                                                                                    .map((x: any) => `${String(x.material_id).slice(0, 8)}…: ${x.grams}g`)
-                                                                                    .join(", ")
-                                                                                : "—"}
-                                                                        </span>
+                                                                        Extra materials: <span className="text-neutral-100">{extraMaterialsText}</span>
                                                                     </div>
+
+                                                                    {cpCalc ? (
+                                                                        <div className="mt-2 border-t border-neutral-800 pt-2">
+                                                                            <div>
+                                                                                Internal total cost:{" "}
+                                                                                <span className="text-neutral-100">{fmtMoney(cpCalc.V2_internalTotalCost)}</span>
+                                                                            </div>
+                                                                        </div>
+                                                                    ) : null}
                                                                 </div>
                                                             )}
                                                         </div>
@@ -592,7 +683,9 @@ request_services (
                                     </div>
                                 </div>
                             </div>
-                        ) : null}                        <div>
+                        ) : null}
+
+                        <div>
                             <span className="text-neutral-400">Status</span>
                             <div>
                                 {activeStep
@@ -601,14 +694,14 @@ request_services (
                                         ? `${pausedStep.service_type} Paused`
                                         : firstNotStarted
                                             ? `Waiting to Start ${firstNotStarted.service_type}`
-                                            : request.overall_status}
+                                            : overallStatus}
                             </div>
                         </div>
 
                         <div>
                             <span className="text-neutral-400">Submitted</span>
                             <div>
-                                {new Date(request.created_at).toLocaleString(undefined, {
+                                {new Date((request as any).created_at).toLocaleString(undefined, {
                                     dateStyle: "medium",
                                     timeStyle: "short",
                                 })}
@@ -617,11 +710,11 @@ request_services (
 
                         <div>
                             <span className="text-neutral-400">Project Details</span>
-                            <div className="whitespace-pre-wrap">{request.project_details || "—"}</div>
+                            <div className="whitespace-pre-wrap">{(request as any).project_details || "—"}</div>
                         </div>
                     </div>
                 </div>
             </div>
-        </AppShell >
+        </AppShell>
     );
 }

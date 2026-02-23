@@ -1,0 +1,9 @@
+name: OpenAI GPT Config
+version: 1.0.0
+schema: v1
+
+models:
+  - name: gpt-4o
+    provider: openai
+    model: gpt-4o
+    apiKey: sk-REPLACE_WITH_YOUR_REAL_OPENAI_API_KEY

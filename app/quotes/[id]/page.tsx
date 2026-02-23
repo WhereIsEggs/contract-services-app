@@ -75,8 +75,24 @@ export default async function QuoteDetailPage({
     const rateDesign = 150;
     const rateTesting = 250;
 
-    const contractTotal = Number(p?.calc?.V2_totalWithExternalLabor ?? 0);
+    function toNum(v: any) {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+    }
 
+    const qc = (p?.calc ?? null) as any;
+
+    /**
+     * Customer-facing Contract Printing total:
+     * Prefer explicit field if present, otherwise derive from known calc parts.
+     *
+     * Fallback derivation matches the structure we’ve been using elsewhere:
+     * manufacturing with failure rate + billable labor
+     */
+    const contractTotal =
+        toNum(qc?.V2_totalWithExternalLabor) ||
+        toNum(qc?.total_with_external_labor) ||
+        (toNum(qc?.U2_withFailRate) + toNum(qc?.W2_laborFees_billable));
     const scanningTotal = scanningItem
         ? Number(scanningItem.labor_hours ?? 0) * rateScanning
         : 0;
@@ -96,12 +112,6 @@ export default async function QuoteDetailPage({
         <AppShell title="Quote Detail">
             <div className="mx-auto w-full max-w-3xl">
                 <div className="mb-6 flex items-start justify-between gap-4">
-                    <div>
-                        <h1 className="text-2xl font-semibold">Quote Detail</h1>
-                        <p className="mt-1 text-sm text-neutral-400">
-                            Skeleton detail view (pricing/calculation comes later).
-                        </p>
-                    </div>
 
                     <Link
                         href="/quotes"
@@ -127,7 +137,7 @@ export default async function QuoteDetailPage({
                             </div>
 
                             <div>
-                                <span className="text-neutral-400">Job</span>
+                                <span className="text-neutral-400">Request ID</span>
                                 <div className="font-medium">{(quote as any).job_name}</div>
                             </div>
                         </div>
@@ -139,41 +149,79 @@ export default async function QuoteDetailPage({
                             </div>
 
                             {contractItem ? (
-                                <div className="grid gap-3">
-                                    <div className="grid gap-1">
-                                        <div className="text-xs text-neutral-400">Print time (hours)</div>
-                                        <div className="text-neutral-200">
-                                            {Number((contractItem as any).print_time_hours ?? 0).toFixed(2)}
-                                        </div>
-                                    </div>
+                                <div className="grid gap-2 text-sm text-neutral-200">
 
-                                    <div className="grid gap-2">
-                                        <div className="text-xs text-neutral-400">Materials</div>
-
-                                        <div className="text-neutral-200">
-                                            <span className="text-neutral-400">Material 1:</span>{" "}
-                                            {mat1
-                                                ? `${mat1.category ? `${mat1.category} — ` : ""}${mat1.name}`
-                                                : p.material1_id
-                                                    ? "Unknown material"
-                                                    : "—"}
-                                            {" · "}
-                                            {Number(p.material1_grams ?? 0).toFixed(0)} g
+                                    {/* Print time */}
+                                    {Number(contractItem.print_time_hours ?? 0) > 0 && (
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-neutral-400">Print time</div>
+                                            <div className="text-neutral-100">
+                                                {Number(contractItem.print_time_hours ?? 0).toFixed(2)}h
+                                            </div>
                                         </div>
-
-                                        <div className="text-neutral-200">
-                                            <span className="text-neutral-400">Material 2:</span>{" "}
-                                            {mat2
-                                                ? `${mat2.category ? `${mat2.category} — ` : ""}${mat2.name}`
-                                                : p.material2_id
-                                                    ? "Unknown material"
-                                                    : "—"}
-                                            {" · "}
-                                            {Number(p.material2_grams ?? 0).toFixed(0)} g
+                                    )}
+                                    {/* Setup time */}
+                                    {Number(p?.setup_hours ?? 0) > 0 && (
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-neutral-400">Setup time</div>
+                                            <div className="text-neutral-100">
+                                                {Number(p?.setup_hours).toFixed(2)}h
+                                            </div>
                                         </div>
-                                    </div>
-                                </div>
-                            ) : (
+                                    )}
+
+                                    {/* Support removal time */}
+                                    {Number(p?.support_removal_hours ?? 0) > 0 && (
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-neutral-400">Support removal time</div>
+                                            <div className="text-neutral-100">
+                                                {Number(p?.support_removal_hours).toFixed(2)}h
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Admin time */}
+                                    {Number(p?.admin_hours ?? 0) > 0 && (
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-neutral-400">Admin time</div>
+                                            <div className="text-neutral-100">
+                                                {Number(p?.admin_hours).toFixed(2)}h
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Materials */}
+                                    {(Number(p?.material1_grams ?? 0) > 0 ||
+                                        Number(p?.material2_grams ?? 0) > 0) && (
+                                            <>
+
+                                                {Number(p?.material1_grams ?? 0) > 0 && mat1 && (
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="text-neutral-400">
+                                                            {mat1.category ? `${mat1.category} — ` : ""}
+                                                            {mat1.name}
+                                                        </div>
+                                                        <div className="text-neutral-100">
+                                                            {Number(p.material1_grams).toFixed(0)}g
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {Number(p?.material2_grams ?? 0) > 0 && mat2 && (
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="text-neutral-400">
+                                                            {mat2.category ? `${mat2.category} — ` : ""}
+                                                            {mat2.name}
+                                                        </div>
+                                                        <div className="text-neutral-100">
+                                                            {Number(p.material2_grams).toFixed(0)}g
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+
+                                </div>) : (
                                 <div className="text-sm text-neutral-500">No contract printing item on this quote.</div>
                             )}
                         </div>
@@ -191,11 +239,6 @@ export default async function QuoteDetailPage({
                                         <div className="min-w-0">
                                             <div className="font-medium text-neutral-200">
                                                 Contract Printing
-                                            </div>
-                                            <div className="text-xs text-neutral-400">
-                                                {Number((contractItem as any).print_time_hours ?? 0).toFixed(2)} hrs ·{" "}
-                                                {Number(p.material1_grams ?? 0).toFixed(0)} g
-                                                {p.material2_grams ? ` + ${Number(p.material2_grams ?? 0).toFixed(0)} g` : ""}
                                             </div>
                                         </div>
                                         <div className="shrink-0 font-semibold text-neutral-200">

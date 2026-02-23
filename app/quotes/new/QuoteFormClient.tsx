@@ -67,10 +67,35 @@ export default function QuoteFormClient({
                 ? "md:grid-cols-2"
                 : "md:grid-cols-3";
 
+    useEffect(() => {
+        const handleWheel = (e: WheelEvent) => {
+            const target = e.target as HTMLElement | null;
+
+            if (
+                target &&
+                target instanceof HTMLInputElement &&
+                target.type === "number" &&
+                document.activeElement === target
+            ) {
+                e.preventDefault();
+            }
+        };
+
+        window.addEventListener("wheel", handleWheel, { passive: false });
+
+        return () => {
+            window.removeEventListener("wheel", handleWheel);
+        };
+    }, []);
+
     // =========================
     // Local state for live preview
     // =========================
     const [printTimeHours, setPrintTimeHours] = useState(0);
+
+    const [scanLaborHours, setScanLaborHours] = useState(0);
+    const [designLaborHours, setDesignLaborHours] = useState(0);
+    const [testLaborHours, setTestLaborHours] = useState(0);
 
     const [material1Id, setMaterial1Id] = useState("");
     const [material1Grams, setMaterial1Grams] = useState(0);
@@ -106,11 +131,9 @@ export default function QuoteFormClient({
             return;
         }
 
-        // normalize formatting (optional: keeps "0" as "0", "1." becomes "1")
         e.target.value = String(n);
         setter?.(n);
     };
-
 
     const selectedMat1 = useMemo(
         () => materials.find((m) => m.id === material1Id) ?? null,
@@ -146,6 +169,16 @@ export default function QuoteFormClient({
         const preTaxSaleMarkup = getSetting("pre_tax_sale_markup", 0.65); // D18
         const discountRate = getSetting("discount_rate", 0.1); // D19
         const expeditedUpcharge = getSetting("expedited_upcharge", 0.1); // D20
+
+        // Other services (billable) hourly rates (fallbacks match Quote Detail defaults)
+        const scanningBillableRate = getSetting("scanning_billable_rate", 250);
+        const designBillableRate = getSetting("design_billable_rate", 150);
+        const testingBillableRate = getSetting("testing_billable_rate", 250);
+
+        // Other services totals (billable)
+        const scanningTotal = toNum(scanLaborHours) * scanningBillableRate;
+        const designTotal = toNum(designLaborHours) * designBillableRate;
+        const testingTotal = toNum(testLaborHours) * testingBillableRate;
 
         // lbs (ceil to 0.01)
         const lbs1 = gramsToPoundsCeil2dp(toNum(material1Grams));
@@ -190,14 +223,18 @@ export default function QuoteFormClient({
         // X (total price, no discount/expedite): keep existing behavior (billable labor added)
         const X_totalNoDiscount = V_preTaxManufacturing + W2_laborFees_billable;
 
-        // Discount / expedite pricing
-        const discounted = X_totalNoDiscount * (1 - discountRate);
-        const expedited = X_totalNoDiscount * (1 + expeditedUpcharge);
+        // Grand totals including other selected services (billable)
+        const X_totalNoDiscount_all = X_totalNoDiscount + scanningTotal + designTotal + testingTotal;
 
-        // Internal totals + profit
+        // Discount / expedite pricing
+        const discounted = X_totalNoDiscount_all * (1 - discountRate);
+        const expedited = X_totalNoDiscount_all * (1 + expeditedUpcharge);
+
+        // Profit/margin here is still based on contract printing internal cost,
+        // but uses the full quote total so totals stay aligned visually.
         const internalCost = U2_withFailRate + W2_laborCost_internal;
-        const profit = X_totalNoDiscount - internalCost;
-        const marginPct = X_totalNoDiscount > 0 ? profit / X_totalNoDiscount : 0;
+        const profit = X_totalNoDiscount_all - internalCost;
+        const marginPct = X_totalNoDiscount_all > 0 ? profit / X_totalNoDiscount_all : 0;
 
         const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -221,6 +258,16 @@ export default function QuoteFormClient({
             profit: round2(profit),
             marginPct, // keep as ratio (0.23 = 23%)
 
+            scanningTotal: round2(scanningTotal),
+            designTotal: round2(designTotal),
+            testingTotal: round2(testingTotal),
+
+            X_totalNoDiscount_all: round2(X_totalNoDiscount_all),
+
+            scanningBillableRate,
+            designBillableRate,
+            testingBillableRate,
+
             discounted: round2(discounted),
             expedited: round2(expedited),
 
@@ -240,6 +287,9 @@ export default function QuoteFormClient({
         supportRemovalTimeHrs,
         setupTimeHrs,
         adminTimeHrs,
+        scanLaborHours,
+        designLaborHours,
+        testLaborHours,
     ]);
 
     return (
@@ -260,8 +310,7 @@ export default function QuoteFormClient({
                 }
             `}</style>
 
-            <form action={action} className="grid gap-4">
-                {fromRequest ? <input type="hidden" name="from_request_id" value={fromRequest} /> : null}
+            <form action={action} className="grid gap-4">                {fromRequest ? <input type="hidden" name="from_request_id" value={fromRequest} /> : null}
 
                 <div className="grid gap-3 md:grid-cols-2">
                     <label className="grid gap-1">
@@ -432,9 +481,12 @@ export default function QuoteFormClient({
                             </div>
 
                             <div className="grid gap-3 md:grid-cols-3">
-                                <label className="grid gap-1">
-                                    <span className="text-xs text-neutral-400">Support removal time (hours)</span>
+                                <div className="grid gap-1">
+                                    <label htmlFor="support_removal_time_hours" className="text-xs text-neutral-400">
+                                        Support removal time (hours)
+                                    </label>
                                     <input
+                                        id="support_removal_time_hours"
                                         name="support_removal_time_hours"
                                         type="number"
                                         step="0.01"
@@ -444,11 +496,14 @@ export default function QuoteFormClient({
                                         onBlur={(e) => coerceBlankNumberToZero(e, setSupportRemovalTimeHrs)}
                                         className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     />
-                                </label>
+                                </div>
 
-                                <label className="grid gap-1">
-                                    <span className="text-xs text-neutral-400">Setup time (hours)</span>
+                                <div className="grid gap-1">
+                                    <label htmlFor="setup_time_hours" className="text-xs text-neutral-400">
+                                        Setup time (hours)
+                                    </label>
                                     <input
+                                        id="setup_time_hours"
                                         name="setup_time_hours"
                                         type="number"
                                         step="0.01"
@@ -458,11 +513,14 @@ export default function QuoteFormClient({
                                         onBlur={(e) => coerceBlankNumberToZero(e, setSetupTimeHrs)}
                                         className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     />
-                                </label>
+                                </div>
 
-                                <label className="grid gap-1">
-                                    <span className="text-xs text-neutral-400">Admin time (hours)</span>
+                                <div className="grid gap-1">
+                                    <label htmlFor="admin_time_hours" className="text-xs text-neutral-400">
+                                        Admin time (hours)
+                                    </label>
                                     <input
+                                        id="admin_time_hours"
                                         name="admin_time_hours"
                                         type="number"
                                         step="0.01"
@@ -472,9 +530,8 @@ export default function QuoteFormClient({
                                         onBlur={(e) => coerceBlankNumberToZero(e, setAdminTimeHrs)}
                                         className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                     />
-                                </label>
-                            </div>
-                        </div>
+                                </div>
+                            </div>                        </div>
                     </div>
                 )}
 
@@ -490,8 +547,9 @@ export default function QuoteFormClient({
                                     step="0.01"
                                     min="0"
                                     defaultValue="0"
-                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
-                                />
+                                    onChange={(e) => setScanLaborHours(toNum(e.target.value))}
+                                    onBlur={(e) => coerceBlankNumberToZero(e, setScanLaborHours)}
+                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100" />
                             </label>
                         )}
 
@@ -504,8 +562,9 @@ export default function QuoteFormClient({
                                     step="0.01"
                                     min="0"
                                     defaultValue="0"
-                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
-                                />
+                                    onChange={(e) => setDesignLaborHours(toNum(e.target.value))}
+                                    onBlur={(e) => coerceBlankNumberToZero(e, setDesignLaborHours)}
+                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100" />
                             </label>
                         )}
 
@@ -518,9 +577,9 @@ export default function QuoteFormClient({
                                     step="0.01"
                                     min="0"
                                     defaultValue="0"
-                                    onBlur={(e) => coerceBlankNumberToZero(e)}
-                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
-                                />
+                                    onChange={(e) => setTestLaborHours(toNum(e.target.value))}
+                                    onBlur={(e) => coerceBlankNumberToZero(e, setTestLaborHours)}
+                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100" />
                             </label>
                         )}
                     </div>
@@ -562,6 +621,42 @@ export default function QuoteFormClient({
                                 </div>
                             </div>
 
+                            {svc.scanning ? (
+                                <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                    <div className="text-sm text-neutral-300">3D Scanning</div>
+                                    <div className="mt-1 text-lg font-semibold text-white">
+                                        {money(preview.scanningTotal)}
+                                    </div>
+                                    <div className="text-xs text-neutral-500">
+                                        {scanLaborHours.toFixed(2)} hrs @ {money(preview.scanningBillableRate)}/hr
+                                    </div>
+                                </div>
+                            ) : null}
+
+                            {svc.design ? (
+                                <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                    <div className="text-sm text-neutral-300">3D Design</div>
+                                    <div className="mt-1 text-lg font-semibold text-white">
+                                        {money(preview.designTotal)}
+                                    </div>
+                                    <div className="text-xs text-neutral-500">
+                                        {designLaborHours.toFixed(2)} hrs @ {money(preview.designBillableRate)}/hr
+                                    </div>
+                                </div>
+                            ) : null}
+
+                            {svc.testing ? (
+                                <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
+                                    <div className="text-sm text-neutral-300">Material Testing</div>
+                                    <div className="mt-1 text-lg font-semibold text-white">
+                                        {money(preview.testingTotal)}
+                                    </div>
+                                    <div className="text-xs text-neutral-500">
+                                        {testLaborHours.toFixed(2)} hrs @ {money(preview.testingBillableRate)}/hr
+                                    </div>
+                                </div>
+                            ) : null}
+
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Labor fees</div>
                                 <div className="mt-1 text-lg font-semibold text-white">{money(preview.W2_laborFees_billable)}</div>
@@ -590,7 +685,7 @@ export default function QuoteFormClient({
 
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Total price (no discount)</div>
-                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.X_totalNoDiscount)}
+                                <div className="mt-1 text-lg font-semibold text-white">{money(preview.X_totalNoDiscount_all)}
                                 </div>
                                 <div className="text-xs text-neutral-500">
                                     markup {(preview.preTaxSaleMarkup * 100).toFixed(0)}%

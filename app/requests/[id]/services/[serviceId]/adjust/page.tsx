@@ -1,6 +1,7 @@
 import { createClient } from "@/app/lib/supabase/server";
 import AppShell from "@/app/components/AppShell";
 import { notFound, redirect } from "next/navigation";
+import ContractPrintAdjustClient from "./ContractPrintAdjustClient";
 
 function msToHours(ms: number) {
   if (!Number.isFinite(ms) || ms <= 0) return 0;
@@ -68,11 +69,9 @@ export default async function ServiceAdjustmentPage({
       : autoHours;
 
   const existingNotes = (actuals?.data as any)?.notes ?? "";
-
-  // For Contract Print: pull existing saved CP data (if any)
   const existingCP = (actuals?.data as any)?.contract_print ?? null;
 
-  // If Contract Print, also load request -> quote -> quote_items baseline
+  // If Contract Print, load request -> quote -> quote_items baseline + material options
   let quoteBaseline: any = null;
   let materials: MaterialOption[] = [];
 
@@ -103,7 +102,6 @@ export default async function ServiceAdjustmentPage({
       }
     }
 
-    // Load material options (for extra materials dropdowns)
     const { data: mats, error: matsErr } = await supabase
       .from("material_costs")
       .select("id,name,category,is_active,price_per_lb")
@@ -127,10 +125,10 @@ export default async function ServiceAdjustmentPage({
   const qb_support_removal_hours = toNum(qbParams?.support_removal_hours ?? 0);
   const qb_admin_hours = toNum(qbParams?.admin_hours ?? 0);
 
-  function materialLabel(id: string | null) {
-    if (!id) return "—";
-    const m = materials.find((x) => String(x.id) === String(id));
-    return m ? `${m.name}${m.category ? ` (${m.category})` : ""}` : id;
+  function materialLabel(mid: string | null) {
+    if (!mid) return "—";
+    const m = materials.find((x) => String(x.id) === String(mid));
+    return m ? `${m.name}${m.category ? ` (${m.category})` : ""}` : mid;
   }
 
   // Existing CP saved defaults
@@ -139,25 +137,28 @@ export default async function ServiceAdjustmentPage({
   const cp_extra_setup_hours = toNum(existingCP?.extra_setup_hours ?? 0);
   const cp_extra_support_removal_hours = toNum(existingCP?.extra_support_removal_hours ?? 0);
 
-  // Actual material usage (defaults to quoted baseline, but editable)
-  const cp_material1_id = String(existingCP?.material1_id ?? qb_material1_id ?? "");
-  const cp_material2_id = String(existingCP?.material2_id ?? qb_material2_id ?? "");
-
-  const cp_material1_grams = toNum(
-    existingCP?.material1_grams ?? (qb_material1_grams || 0)
-  );
-  const cp_material2_grams = toNum(
-    existingCP?.material2_grams ?? (qb_material2_grams || 0)
+  // Extra material usage (NOT total).
+  // Default behavior:
+  // - If restarted is checked AND there are no saved extra materials yet -> prefill IDs from quoted baseline materials
+  // - Otherwise -> use saved values (or blank)
+  const cp_extra_material1_id = String(
+    existingCP?.extra_material1_id ??
+    (cp_restarted ? (qb_material1_id ?? "") : "")
   );
 
+  const cp_extra_material2_id = String(
+    existingCP?.extra_material2_id ??
+    (cp_restarted ? (qb_material2_id ?? "") : "")
+  );
+
+  const cp_extra_material1_grams = toNum(existingCP?.extra_material1_grams ?? 0);
+  const cp_extra_material2_grams = toNum(existingCP?.extra_material2_grams ?? 0);
   const cp_notes = String(existingCP?.notes ?? "");
+
   return (
     <AppShell title="Post-Completion Adjustment" activeNav="in_progress">
       <div className="max-w-[900px] mx-auto">
         <div className="mb-6">
-          <h2 className="text-2xl font-semibold text-neutral-100">
-            {service.service_type} – Post Completion Adjustment
-          </h2>
           <div className="mt-4 border-b border-neutral-800" />
         </div>
 
@@ -167,8 +168,16 @@ export default async function ServiceAdjustmentPage({
 
             const supabase = await createClient();
 
-            // Always allow notes at root for all services (optional)
             const notes_root = String(formData.get("notes_root") ?? "").trim();
+
+            // ---------- helpers ----------
+            function gramsToPoundsCeil2dp(grams: number) {
+              if (!Number.isFinite(grams) || grams <= 0) return 0;
+              return Math.ceil(grams * 0.00220462 * 100) / 100; // ceil to 0.01 lb
+            }
+            function round2(n: number) {
+              return Math.round((n + Number.EPSILON) * 100) / 100;
+            }
 
             if (formData.get("mode") === "contract_print") {
               const restarted = formData.get("restarted") === "on";
@@ -177,22 +186,15 @@ export default async function ServiceAdjustmentPage({
               const extra_setup_hours = toNum(formData.get("extra_setup_hours"));
               const extra_support_removal_hours = toNum(formData.get("extra_support_removal_hours"));
 
-              // Actual material usage (editable)
-              const material1_id = String(formData.get("material1_id") ?? "").trim() || null;
-              const material2_id = String(formData.get("material2_id") ?? "").trim() || null;
+              const extra_material1_id =
+                String(formData.get("extra_material1_id") ?? "").trim() || null;
+              const extra_material2_id =
+                String(formData.get("extra_material2_id") ?? "").trim() || null;
 
-              const material1_grams = toNum(formData.get("material1_grams"));
-              const material2_grams = toNum(formData.get("material2_grams"));
+              const extra_material1_grams = toNum(formData.get("extra_material1_grams"));
+              const extra_material2_grams = toNum(formData.get("extra_material2_grams"));
+
               const notes = String(formData.get("cp_notes") ?? "").trim();
-
-              // ---------- helpers ----------
-              function gramsToPoundsCeil2dp(grams: number) {
-                if (!Number.isFinite(grams) || grams <= 0) return 0;
-                return Math.ceil(grams * 0.00220462 * 100) / 100; // ceil to 0.01 lb
-              }
-              function round2(n: number) {
-                return Math.round((n + Number.EPSILON) * 100) / 100;
-              }
 
               // ---------- load quote baseline again (server action safe) ----------
               const { data: reqRow, error: reqErr } = await supabase
@@ -201,26 +203,51 @@ export default async function ServiceAdjustmentPage({
                 .eq("id", id)
                 .single();
 
+              if (reqErr) throw new Error(reqErr.message);
+
               const quote_id = reqRow?.quote_id ? String(reqRow.quote_id) : null;
 
+              // Baseline time
               let baseline_print_time_hours = 0;
               let baseline_setup_hours = 0;
               let baseline_support_removal_hours = 0;
 
+              // Baseline materials (from quote)
+              let baseline_material1_id: string | null = null;
+              let baseline_material2_id: string | null = null;
+              let baseline_material1_grams = 0;
+              let baseline_material2_grams = 0;
+
               if (quote_id) {
-                const { data: qi } = await supabase
+                const { data: qi, error: qiErr } = await supabase
                   .from("quote_items")
                   .select("print_time_hours, params")
                   .eq("quote_id", quote_id)
                   .eq("service_type", "CONTRACT_PRINTING")
                   .maybeSingle();
 
+                if (qiErr) throw new Error(qiErr.message);
+
                 baseline_print_time_hours = toNum((qi as any)?.print_time_hours ?? 0);
 
                 const p = (qi as any)?.params ?? {};
                 baseline_setup_hours = toNum(p?.setup_hours ?? 0);
                 baseline_support_removal_hours = toNum(p?.support_removal_hours ?? 0);
+
+                baseline_material1_id = p?.material1_id ? String(p.material1_id) : null;
+                baseline_material2_id = p?.material2_id ? String(p.material2_id) : null;
+
+                baseline_material1_grams = toNum(p?.material1_grams ?? 0);
+                baseline_material2_grams = toNum(p?.material2_grams ?? 0);
               }
+
+              // Total material usage used for cost calc (baseline + extra grams)
+              // IMPORTANT: we treat "extra" grams as additive to the quoted baseline.
+              const total_material1_id = baseline_material1_id;
+              const total_material2_id = baseline_material2_id;
+
+              const total_material1_grams = baseline_material1_grams + extra_material1_grams;
+              const total_material2_grams = baseline_material2_grams + extra_material2_grams;
 
               // ---------- cost settings ----------
               const { data: settingsRows, error: settingsErr } = await supabase
@@ -254,7 +281,9 @@ export default async function ServiceAdjustmentPage({
               const monitoringInternalRate = getSetting("monitoring_internal_rate", 0);
 
               // ---------- material rates ----------
-              const materialIds = [material1_id, material2_id].filter(Boolean) as string[];
+              const materialIds = [total_material1_id, total_material2_id].filter(
+                Boolean
+              ) as string[];
 
               const { data: mats, error: matsErr } = materialIds.length
                 ? await supabase
@@ -269,8 +298,8 @@ export default async function ServiceAdjustmentPage({
                 (mats ?? []).map((m: any) => [String(m.id), toNum(m.price_per_lb)])
               );
 
-              const rate1 = material1_id ? rateById.get(material1_id) ?? 0 : 0;
-              const rate2 = material2_id ? rateById.get(material2_id) ?? 0 : 0;
+              const rate1 = total_material1_id ? rateById.get(total_material1_id) ?? 0 : 0;
+              const rate2 = total_material2_id ? rateById.get(total_material2_id) ?? 0 : 0;
 
               // ---------- ACTUALS model ----------
               // Machine time: baseline print time + extra machine time
@@ -281,9 +310,9 @@ export default async function ServiceAdjustmentPage({
               const actual_support_removal_hours =
                 baseline_support_removal_hours + extra_support_removal_hours;
 
-              // Materials: use the selected actual grams
-              const lbs1 = gramsToPoundsCeil2dp(material1_grams);
-              const lbs2 = gramsToPoundsCeil2dp(material2_grams);
+              // Materials: baseline + extra grams (converted to lbs)
+              const lbs1 = gramsToPoundsCeil2dp(total_material1_grams);
+              const lbs2 = gramsToPoundsCeil2dp(total_material2_grams);
 
               // Costs (mirrors quote calc structure)
               const Q2_machineCost = actual_print_time_hours * machineCostRate;
@@ -293,6 +322,7 @@ export default async function ServiceAdjustmentPage({
 
               const T2_manufacturingCost = Q2_machineCost + R2_materialUseCost + S2_elecSpaceCost;
 
+              // Note: we keep these in calc_actual for later, but we will NOT show billable labor under "Actual" on completed page.
               const W2_laborFees_billable =
                 actual_support_removal_hours * supportRemovalBillableRate +
                 actual_setup_hours * machineSetupBillableRate +
@@ -313,6 +343,10 @@ export default async function ServiceAdjustmentPage({
                 rate2: round2(rate2),
                 defaultFailureRate: round2(defaultFailureRate),
 
+                baseline_print_time_hours: round2(baseline_print_time_hours),
+                baseline_setup_hours: round2(baseline_setup_hours),
+                baseline_support_removal_hours: round2(baseline_support_removal_hours),
+
                 actual_print_time_hours: round2(actual_print_time_hours),
                 actual_setup_hours: round2(actual_setup_hours),
                 actual_support_removal_hours: round2(actual_support_removal_hours),
@@ -326,6 +360,7 @@ export default async function ServiceAdjustmentPage({
                 U2_withFailRate: round2(U2_withFailRate),
                 V2_internalTotalCost: round2(V2_internalTotalCost),
               };
+
               const payloadData = {
                 ...(actuals?.data as any),
                 notes: notes_root,
@@ -335,69 +370,66 @@ export default async function ServiceAdjustmentPage({
                   extra_setup_hours,
                   extra_support_removal_hours,
 
-                  material1_id,
-                  material1_grams,
-                  material2_id,
-                  material2_grams,
+                  // Extra-only materials
+                  extra_material1_id,
+                  extra_material1_grams,
+                  extra_material2_id,
+                  extra_material2_grams,
+
+                  // Baseline (quoted) materials (for display + audit)
+                  baseline_material1_id,
+                  baseline_material1_grams,
+                  baseline_material2_id,
+                  baseline_material2_grams,
+
+                  // Totals (baseline + extra) used for cost calc and later profit/loss
+                  total_material1_id,
+                  total_material1_grams,
+                  total_material2_id,
+                  total_material2_grams,
 
                   calc_actual,
                   notes,
                 },
               };
 
-              const { error } = await supabase
-                .from("service_actuals")
-                .upsert(
-                  {
-                    service_id: serviceId,
-                    actual_hours: null, // CP uses structured fields; we’ll compute totals later
-                    data: payloadData,
-                  },
-                  { onConflict: "service_id" }
-                );
-
-              if (error) throw new Error(error.message);
-
-              redirect(`/requests/${id}`);
-            } else {
-              // Non-print (simple hours)
-              const actual_hours = toNum(formData.get("actual_hours"));
-
-              const payloadData = {
-                ...(actuals?.data as any),
-                notes: notes_root || String(formData.get("notes") ?? "").trim(),
-              };
-
-              const { error } = await supabase
-                .from("service_actuals")
-                .upsert(
-                  {
-                    service_id: serviceId,
-                    actual_hours,
-                    data: payloadData,
-                  },
-                  { onConflict: "service_id" }
-                );
+              const { error } = await supabase.from("service_actuals").upsert(
+                {
+                  service_id: serviceId,
+                  actual_hours: null, // CP uses structured fields
+                  data: payloadData,
+                },
+                { onConflict: "service_id" }
+              );
 
               if (error) throw new Error(error.message);
 
               redirect(`/requests/${id}`);
             }
+
+            // ---------- Non-print (simple hours) ----------
+            const actual_hours = toNum(formData.get("actual_hours"));
+
+            const payloadData = {
+              ...(actuals?.data as any),
+              notes: notes_root || String(formData.get("notes") ?? "").trim(),
+            };
+
+            const { error } = await supabase.from("service_actuals").upsert(
+              {
+                service_id: serviceId,
+                actual_hours,
+                data: payloadData,
+              },
+              { onConflict: "service_id" }
+            );
+
+            if (error) throw new Error(error.message);
+
+            redirect(`/requests/${id}`);
           }}
           className="bg-neutral-900 rounded-lg shadow-lg p-6 text-neutral-200"
         >
-          {/* Root notes (optional) */}
-          <div className="mb-6 grid gap-2">
-            <label className="text-sm text-neutral-200">Notes (optional)</label>
-            <textarea
-              name="notes_root"
-              rows={3}
-              defaultValue={existingNotes}
-              className="w-full rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-sm text-neutral-100"
-              placeholder="General notes about this service completion..."
-            />
-          </div>
-
           {!isContractPrint ? (
             <>
               <input type="hidden" name="mode" value="non_print" />
@@ -439,28 +471,39 @@ export default async function ServiceAdjustmentPage({
               {/* Baseline summary */}
               <div className="mb-6 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-3">
                 <div className="text-sm font-medium text-neutral-100">Quoted Baseline</div>
+
                 {quoteBaseline ? (
                   <div className="mt-2 grid gap-2 text-sm text-neutral-300">
                     <div>
-                      Quoted print time hours:{" "}
+                      Print time:{" "}
                       <span className="text-neutral-100">
                         {toNum(quoteBaseline.print_time_hours).toFixed(2)}
                       </span>
                     </div>
+
+                    {/* Split setup/support/admin onto separate lines */}
                     <div>
-                      Quoted setup / support / admin:{" "}
+                      Setup time:{" "}
+                      <span className="text-neutral-100">{qb_setup_hours.toFixed(2)}</span>
+                    </div>
+                    <div>
+                      Support removal time:{" "}
                       <span className="text-neutral-100">
-                        {qb_setup_hours.toFixed(2)} / {qb_support_removal_hours.toFixed(2)} /{" "}
-                        {qb_admin_hours.toFixed(2)}
+                        {qb_support_removal_hours.toFixed(2)}
                       </span>
                     </div>
                     <div>
-                      Quoted materials:
+                      Admin time:{" "}
+                      <span className="text-neutral-100">{qb_admin_hours.toFixed(2)}</span>
+                    </div>
+
+                    <div>
+                      Materials:
                       <div className="mt-1 text-neutral-100">
-                        • {materialLabel(qb_material1_id)} — {qb_material1_grams} g
+                        • {materialLabel(qb_material1_id)} - {qb_material1_grams} g
                       </div>
                       <div className="text-neutral-100">
-                        • {materialLabel(qb_material2_id)} — {qb_material2_grams} g
+                        • {materialLabel(qb_material2_id)} - {qb_material2_grams} g
                       </div>
                     </div>
 
@@ -477,173 +520,20 @@ export default async function ServiceAdjustmentPage({
                 )}
               </div>
 
-              {/* Contract Print actuals inputs */}
-              <div className="grid gap-4">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" name="restarted" defaultChecked={cp_restarted} />
-                  Was it restarted?
-                </label>
-
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <label className="text-sm">Extra machine time (hours)</label>
-                    <input
-                      name="extra_machine_hours"
-                      defaultValue={cp_extra_machine_hours.toFixed(2)}
-                      inputMode="decimal"
-                      className="h-10 w-full rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                    />
-                  </div>
-
-                  <div className="grid gap-2">
-                    <label className="text-sm">Extra setup time (hours)</label>
-                    <input
-                      name="extra_setup_hours"
-                      defaultValue={cp_extra_setup_hours.toFixed(2)}
-                      inputMode="decimal"
-                      className="h-10 w-full rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                    />
-                  </div>
-
-                  <div className="grid gap-2">
-                    <label className="text-sm">Extra support removal (hours)</label>
-                    <input
-                      name="extra_support_removal_hours"
-                      defaultValue={cp_extra_support_removal_hours.toFixed(2)}
-                      inputMode="decimal"
-                      className="h-10 w-full rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                    />
-                  </div>
-                </div>
-
-                {/* Extra materials (2 rows for now) */}
-                <div className="mt-2">
-                  <div className="mt-2">
-                    <div className="text-sm font-medium text-neutral-100">Material usage</div>
-                    <div className="mt-2 grid gap-3">
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_140px]">
-                        <select
-                          name="material1_id"
-                          defaultValue={cp_material1_id}
-                          className="h-10 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                        >
-                          <option value="">Select material…</option>
-                          {materials.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.category ? `${m.category} — ` : ""}
-                              {m.name}
-                              {!m.is_active ? " (inactive)" : ""}
-                            </option>
-                          ))}
-                        </select>
-
-                        <input
-                          name="material1_grams"
-                          defaultValue={String(cp_material1_grams)}
-                          inputMode="numeric"
-                          className="h-10 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                          placeholder="grams"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_140px]">
-                        <select
-                          name="material2_id"
-                          defaultValue={cp_material2_id}
-                          className="h-10 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                        >
-                          <option value="">Select material…</option>
-                          {materials.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.category ? `${m.category} — ` : ""}
-                              {m.name}
-                              {!m.is_active ? " (inactive)" : ""}
-                            </option>
-                          ))}
-                        </select>
-
-                        <input
-                          name="material2_grams"
-                          defaultValue={String(cp_material2_grams)}
-                          inputMode="numeric"
-                          className="h-10 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                          placeholder="grams"
-                        />
-                      </div>
-
-                      <div className="text-xs text-neutral-500">
-                        Defaults to the quoted materials, but you can change it to what was actually used.
-                      </div>
-                    </div>
-                  </div>                  <div className="mt-2 grid gap-3">
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_140px]">
-                      <select
-                        name="extra_material1_id"
-                        defaultValue={String(cp_row1.material_id ?? "")}
-                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                      >
-                        <option value="">Select material…</option>
-                        {materials.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.category ? `${m.category} — ` : ""}
-                            {m.name}
-                            {!m.is_active ? " (inactive)" : ""}
-                          </option>
-                        ))}
-                      </select>
-
-                      <input
-                        name="extra_material1_grams"
-                        defaultValue={toNum(cp_row1.grams).toString()}
-                        inputMode="numeric"
-                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                        placeholder="grams"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_140px]">
-                      <select
-                        name="extra_material2_id"
-                        defaultValue={String(cp_row2.material_id ?? "")}
-                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                      >
-                        <option value="">Select material…</option>
-                        {materials.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.category ? `${m.category} — ` : ""}
-                            {m.name}
-                            {!m.is_active ? " (inactive)" : ""}
-                          </option>
-                        ))}
-                      </select>
-
-                      <input
-                        name="extra_material2_grams"
-                        defaultValue={toNum(cp_row2.grams).toString()}
-                        inputMode="numeric"
-                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
-                        placeholder="grams"
-                      />
-                    </div>
-
-                    <div className="text-xs text-neutral-500">
-                      (We’ll make this truly dynamic/add-row later. Two rows is enough to start.)
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-2">
-                  <label className="text-sm">Failure / restart notes</label>
-                  <textarea
-                    name="cp_notes"
-                    rows={4}
-                    defaultValue={cp_notes}
-                    className="w-full rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-sm text-neutral-100"
-                    placeholder="Describe restarts, failures, extra runs, etc."
-                  />
-                </div>
-              </div>
-            </>
+              <ContractPrintAdjustClient
+                materials={materials}
+                qb_material1_id={qb_material1_id}
+                qb_material2_id={qb_material2_id}
+                initialRestarted={cp_restarted}
+                initialExtraMachineHours={cp_extra_machine_hours.toFixed(2)}
+                initialExtraSetupHours={cp_extra_setup_hours.toFixed(2)}
+                initialExtraSupportRemovalHours={cp_extra_support_removal_hours.toFixed(2)}
+                initialExtraMaterial1Id={cp_extra_material1_id}
+                initialExtraMaterial2Id={cp_extra_material2_id}
+                initialExtraMaterial1Grams={String(cp_extra_material1_grams)}
+                initialExtraMaterial2Grams={String(cp_extra_material2_grams)}
+                initialNotes={cp_notes}
+              />            </>
           )}
 
           <div className="mt-6 flex gap-3">

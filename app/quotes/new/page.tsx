@@ -104,7 +104,7 @@ export default async function NewQuotePage({
 
 
     return (
-        <AppShell title="New Quote">
+        <AppShell title="">
             <div className="mx-auto w-full max-w-3xl">
                 <div className="mb-6">
                     <h1 className="text-2xl font-semibold">New Quote</h1>
@@ -209,16 +209,21 @@ async function createQuote(formData: FormData) {
             String(formData.get("material2_grams") ?? "0").trim()
         );
 
-        const support_removal_hours = Number(
-            String(formData.get("support_removal_time_hours") ?? "0").trim()
-        );
-        const setup_hours = Number(
-            String(formData.get("setup_time_hours") ?? "0").trim()
-        );
-        const admin_hours = Number(
-            String(formData.get("admin_time_hours") ?? "0").trim()
-        );
+        const support_removal_raw = formData.get("support_removal_time_hours");
+        const setup_raw = formData.get("setup_time_hours");
+        const admin_raw = formData.get("admin_time_hours");
 
+        console.log("[createQuote] raw support_removal_time_hours =", support_removal_raw);
+        console.log("[createQuote] raw setup_time_hours =", setup_raw);
+        console.log("[createQuote] raw admin_time_hours =", admin_raw);
+
+        const support_removal_hours = Number(String(support_removal_raw ?? "0").trim());
+        const setup_hours = Number(String(setup_raw ?? "0").trim());
+        const admin_hours = Number(String(admin_raw ?? "0").trim());
+
+        console.log("[createQuote] parsed support_removal_hours =", support_removal_hours);
+        console.log("[createQuote] parsed setup_hours =", setup_hours);
+        console.log("[createQuote] parsed admin_hours =", admin_hours);
         if (!Number.isFinite(support_removal_hours) || support_removal_hours < 0) throw new Error("Invalid support removal hours.");
         if (!Number.isFinite(setup_hours) || setup_hours < 0) throw new Error("Invalid setup hours.");
         if (!Number.isFinite(admin_hours) || admin_hours < 0) throw new Error("Invalid admin hours.");
@@ -313,6 +318,7 @@ async function createQuote(formData: FormData) {
         if (quoteErr) throw new Error(quoteErr.message);
 
         const quote_id = quoteRow.id as string;
+        console.log("[createQuote] quote_id =", quote_id, "from_request_id =", from_request_id);
 
         // Link quote to request (if coming from request)
         if (from_request_id) {
@@ -466,9 +472,24 @@ async function createQuote(formData: FormData) {
             });
         }
 
-        const { error: itemsErr } = await supabase.from("quote_items").insert(items);
+        const { data: insertedItems, error: itemsErr } = await supabase
+            .from("quote_items")
+            .insert(items)
+            .select("id, service_type, created_at, params");
+
         if (itemsErr) throw new Error(itemsErr.message);
 
+        console.log(
+            "[createQuote] inserted quote_items:",
+            (insertedItems ?? []).map((it: any) => ({
+                id: it.id,
+                service_type: it.service_type,
+                created_at: it.created_at,
+                admin_hours: it.params?.admin_hours,
+                setup_hours: it.params?.setup_hours,
+                support_removal_hours: it.params?.support_removal_hours,
+            }))
+        );
         // Done
         revalidatePath("/quotes/new");
         if (from_request_id) redirect(`/requests/${from_request_id}`);
