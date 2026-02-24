@@ -505,12 +505,19 @@ export default async function RequestDetailPage({
                                                         toNum(qc?.total_with_external_labor) ||
                                                         (toNum(qc?.U2_withFailRate) + toNum(qc?.W2_laborFees_billable));
 
-                                                    const hasMat1 = toNum(qp?.material1_grams) > 0 && String(qp?.material1_id ?? "").trim().length > 0;
-                                                    const hasMat2 = toNum(qp?.material2_grams) > 0 && String(qp?.material2_id ?? "").trim().length > 0;
+                                                    const quotedMaterials = [
+                                                        {
+                                                            id: String(qp?.material1_id ?? "").trim(),
+                                                            grams: toNum(qp?.material1_grams),
+                                                        },
+                                                        {
+                                                            id: String(qp?.material2_id ?? "").trim(),
+                                                            grams: toNum(qp?.material2_grams),
+                                                        },
+                                                    ].filter((m) => m.grams > 0 && m.id.length > 0 && materialNameById.has(m.id));
 
-                                                    const materialsText = [hasMat1 ? `${materialLabelFromId(qp?.material1_id)}: ${toNum(qp?.material1_grams).toFixed(0)}g` : null,
-                                                    hasMat2 ? `${materialLabelFromId(qp?.material2_id)}: ${toNum(qp?.material2_grams).toFixed(0)}g` : null]
-                                                        .filter(Boolean)
+                                                    const materialsText = quotedMaterials
+                                                        .map((m) => `${materialNameById.get(m.id)}: ${m.grams.toFixed(0)}g`)
                                                         .join(", ");
 
                                                     return (
@@ -534,9 +541,9 @@ export default async function RequestDetailPage({
                                                                             Admin time: <span className="text-neutral-100">{fmtHours(qp?.admin_hours)}</span>
                                                                         </div>
 
-                                                                        {(hasMat1 || hasMat2) ? (
+                                                                        {quotedMaterials.length > 0 ? (
                                                                             <div>
-                                                                                Materials: <span className="text-neutral-100">{materialsText || "—"}</span>
+                                                                                Materials: <span className="text-neutral-100">{materialsText}</span>
                                                                             </div>
                                                                         ) : null}
 

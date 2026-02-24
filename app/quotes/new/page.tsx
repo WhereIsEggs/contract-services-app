@@ -361,59 +361,75 @@ async function createQuote(formData: FormData) {
 
             const Q2_machineCost = print_time_hours * machineCostRate;
 
-            const R2_materialUseCost = (lbs1 * rate1 + lbs2 * rate2) * 1.65;
+            // Base material cost (your true cost)
+            const R2_materialUseCost_internal = (lbs1 * rate1 + lbs2 * rate2);
+
+            // Billable material pricing (customer-facing markup)
+            const R2_materialUseCost = R2_materialUseCost_internal * 1.65;
 
             const S2_elecSpaceCost =
                 print_time_hours * (electricityCostRate + spaceConsumablesCostRate);
 
-            const T2_manufacturingCost =
-                Q2_machineCost + R2_materialUseCost + S2_elecSpaceCost;
+            // Keep existing keys as BILLABLE manufacturing cost so downstream quote-total logic
+            // that expects these fields remains customer-facing.
+            const T2_manufacturingCost = Q2_machineCost + R2_materialUseCost + S2_elecSpaceCost;
+
+            // Internal manufacturing cost (no markup)
+            const T2_manufacturingCost_internal =
+                Q2_machineCost + R2_materialUseCost_internal + S2_elecSpaceCost;
 
             const J2_supportRemovalTime = support_removal_hours;
             const K2_setupTime = setup_hours;
             const L2_adminTime = admin_hours;
 
-            // ===============================
             // BILLABLE LABOR (customer-facing)
-            // ===============================
             const W2_laborFees_billable =
                 J2_supportRemovalTime * supportRemovalBillableRate +
                 K2_setupTime * machineSetupBillableRate +
                 L2_adminTime * adminFeesBillableRate +
                 print_time_hours * monitoringTimePct * monitoringBillableRate;
 
-            // ===============================
             // INTERNAL LABOR (your real cost)
-            // ===============================
             const W2_laborCost_internal =
                 J2_supportRemovalTime * supportRemovalInternalRate +
                 K2_setupTime * machineSetupInternalRate +
                 L2_adminTime * adminFeesInternalRate +
                 print_time_hours * monitoringTimePct * monitoringInternalRate;
 
+            // Keep existing U2_withFailRate as BILLABLE (customer-facing) manufacturing-with-failure
             const U2_withFailRate = T2_manufacturingCost * (1 + defaultFailureRate);
 
-            // Internal total cost basis (manufacturing w/ failure + INTERNAL labor)
-            const V2_internalTotalCost =
-                U2_withFailRate + W2_laborCost_internal;
+            // Internal manufacturing-with-failure (no markup)
+            const U2_withFailRate_internal =
+                T2_manufacturingCost_internal * (1 + defaultFailureRate);
+
+            // Internal total cost basis (INTERNAL manufacturing w/ failure + INTERNAL labor)
+            const V2_internalTotalCost = U2_withFailRate_internal + W2_laborCost_internal;
 
             roundedContractCalc = {
-                // inputs / lookups
                 lbs1: round2(lbs1),
                 lbs2: round2(lbs2),
                 rate1: round2(rate1),
                 rate2: round2(rate2),
-
                 defaultFailureRate: round2(defaultFailureRate),
 
-                // calc pieces
                 Q2_machineCost: round2(Q2_machineCost),
+
+                // BILLABLE (customer-facing)
                 R2_materialUseCost: round2(R2_materialUseCost),
-                S2_elecSpaceCost: round2(S2_elecSpaceCost),
                 T2_manufacturingCost: round2(T2_manufacturingCost),
+                U2_withFailRate: round2(U2_withFailRate),
+
+                // INTERNAL (your true cost)
+                R2_materialUseCost_internal: round2(R2_materialUseCost_internal),
+                T2_manufacturingCost_internal: round2(T2_manufacturingCost_internal),
+                U2_withFailRate_internal: round2(U2_withFailRate_internal),
+
+                S2_elecSpaceCost: round2(S2_elecSpaceCost),
+
                 W2_laborFees_billable: round2(W2_laborFees_billable),
                 W2_laborCost_internal: round2(W2_laborCost_internal),
-                U2_withFailRate: round2(U2_withFailRate),
+
                 V2_internalTotalCost: round2(V2_internalTotalCost),
             };
         }

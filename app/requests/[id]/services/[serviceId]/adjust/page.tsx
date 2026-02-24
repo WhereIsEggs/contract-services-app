@@ -131,6 +131,11 @@ export default async function ServiceAdjustmentPage({
     return m ? `${m.name}${m.category ? ` (${m.category})` : ""}` : mid;
   }
 
+  function hasResolvedMaterial(mid: string | null) {
+    if (!mid) return false;
+    return materials.some((x) => String(x.id) === String(mid));
+  }
+
   // Existing CP saved defaults
   const cp_restarted = Boolean(existingCP?.restarted ?? false);
   const cp_extra_machine_hours = toNum(existingCP?.extra_machine_hours ?? 0);
@@ -218,8 +223,11 @@ export default async function ServiceAdjustmentPage({
               let baseline_material1_grams = 0;
               let baseline_material2_grams = 0;
 
+              // Keep the quote item in scope so we can read params.calc later
+              let qi: any = null;
+
               if (quote_id) {
-                const { data: qi, error: qiErr } = await supabase
+                const { data, error: qiErr } = await supabase
                   .from("quote_items")
                   .select("print_time_hours, params")
                   .eq("quote_id", quote_id)
@@ -227,6 +235,8 @@ export default async function ServiceAdjustmentPage({
                   .maybeSingle();
 
                 if (qiErr) throw new Error(qiErr.message);
+
+                qi = data;
 
                 baseline_print_time_hours = toNum((qi as any)?.print_time_hours ?? 0);
 
@@ -240,7 +250,6 @@ export default async function ServiceAdjustmentPage({
                 baseline_material1_grams = toNum(p?.material1_grams ?? 0);
                 baseline_material2_grams = toNum(p?.material2_grams ?? 0);
               }
-
               // Total material usage used for cost calc (baseline + extra grams)
               // IMPORTANT: we treat "extra" grams as additive to the quoted baseline.
               const total_material1_id = baseline_material1_id;
@@ -302,41 +311,63 @@ export default async function ServiceAdjustmentPage({
               const rate2 = total_material2_id ? rateById.get(total_material2_id) ?? 0 : 0;
 
               // ---------- ACTUALS model ----------
-              // Machine time: baseline print time + extra machine time
-              const actual_print_time_hours = baseline_print_time_hours + extra_machine_hours;
+              // Goal:
+              // - "Quoted internal" stays what it was at quote time (params.calc.V2_internalTotalCost)
+              // - "Actual total internal" = quoted_internal + extra_internal
+              // - extra_internal uses the SAME internal formula, applied ONLY to extras, and NO 1.65 markup.
 
-              // Setup/support time: baseline + extras
+              // Totals (baseline + extra) — still useful for display/audit
+              const actual_print_time_hours = baseline_print_time_hours + extra_machine_hours;
               const actual_setup_hours = baseline_setup_hours + extra_setup_hours;
               const actual_support_removal_hours =
                 baseline_support_removal_hours + extra_support_removal_hours;
 
-              // Materials: baseline + extra grams (converted to lbs)
               const lbs1 = gramsToPoundsCeil2dp(total_material1_grams);
               const lbs2 = gramsToPoundsCeil2dp(total_material2_grams);
 
-              // Costs (mirrors quote calc structure)
-              const Q2_machineCost = actual_print_time_hours * machineCostRate;
-              const R2_materialUseCost = (lbs1 * rate1 + lbs2 * rate2) * 1.65;
-              const S2_elecSpaceCost =
-                actual_print_time_hours * (electricityCostRate + spaceConsumablesCostRate);
+              // Pull quoted baseline internal from the quote snapshot
+              // (If missing for some reason, fall back to 0 to avoid crashing.)
+              const baseline_internal_cost = toNum((qi as any)?.params?.calc?.V2_internalTotalCost ?? 0);
 
-              const T2_manufacturingCost = Q2_machineCost + R2_materialUseCost + S2_elecSpaceCost;
+              // Extra-only inputs
+              const extra_print_time_hours = extra_machine_hours; // extra machine time == extra print time
+              const extra_setup_time_hours = extra_setup_hours;
+              const extra_support_removal_time_hours = extra_support_removal_hours;
 
-              // Note: we keep these in calc_actual for later, but we will NOT show billable labor under "Actual" on completed page.
+              const extra_lbs1 = gramsToPoundsCeil2dp(extra_material1_grams);
+              const extra_lbs2 = gramsToPoundsCeil2dp(extra_material2_grams);
+
+              // Extra INTERNAL manufacturing costs (NO markup)
+              const Q2_machineCost_extra = extra_print_time_hours * machineCostRate;
+              const R2_materialUseCost_internal_extra = (extra_lbs1 * rate1 + extra_lbs2 * rate2);
+              const S2_elecSpaceCost_extra =
+                extra_print_time_hours * (electricityCostRate + spaceConsumablesCostRate);
+
+              const T2_manufacturingCost_internal_extra =
+                Q2_machineCost_extra + R2_materialUseCost_internal_extra + S2_elecSpaceCost_extra;
+
+              const U2_withFailRate_internal_extra =
+                T2_manufacturingCost_internal_extra * (1 + defaultFailureRate);
+
+              // Extra INTERNAL labor costs
+              const W2_laborCost_internal_extra =
+                extra_support_removal_time_hours * supportRemovalInternalRate +
+                extra_setup_time_hours * machineSetupInternalRate +
+                extra_print_time_hours * monitoringTimePct * monitoringInternalRate;
+
+              const extra_internal_cost = U2_withFailRate_internal_extra + W2_laborCost_internal_extra;
+
+              // Final number for the Completed page "Actual" section
+              const V2_internalTotalCost = baseline_internal_cost + extra_internal_cost;
+
+              // Keep billable labor totals for reference/audit (even if you don't display them)
               const W2_laborFees_billable =
                 actual_support_removal_hours * supportRemovalBillableRate +
                 actual_setup_hours * machineSetupBillableRate +
                 actual_print_time_hours * monitoringTimePct * monitoringBillableRate;
 
-              const W2_laborCost_internal =
-                actual_support_removal_hours * supportRemovalInternalRate +
-                actual_setup_hours * machineSetupInternalRate +
-                actual_print_time_hours * monitoringTimePct * monitoringInternalRate;
-
-              const U2_withFailRate = T2_manufacturingCost * (1 + defaultFailureRate);
-              const V2_internalTotalCost = U2_withFailRate + W2_laborCost_internal;
-
               const calc_actual = {
+                // totals (baseline + extra) for audit/display
                 lbs1: round2(lbs1),
                 lbs2: round2(lbs2),
                 rate1: round2(rate1),
@@ -351,16 +382,30 @@ export default async function ServiceAdjustmentPage({
                 actual_setup_hours: round2(actual_setup_hours),
                 actual_support_removal_hours: round2(actual_support_removal_hours),
 
-                Q2_machineCost: round2(Q2_machineCost),
-                R2_materialUseCost: round2(R2_materialUseCost),
-                S2_elecSpaceCost: round2(S2_elecSpaceCost),
-                T2_manufacturingCost: round2(T2_manufacturingCost),
+                // baseline + extra composition
+                baseline_internal_cost: round2(baseline_internal_cost),
+
+                extra_print_time_hours: round2(extra_print_time_hours),
+                extra_setup_time_hours: round2(extra_setup_time_hours),
+                extra_support_removal_time_hours: round2(extra_support_removal_time_hours),
+                extra_lbs1: round2(extra_lbs1),
+                extra_lbs2: round2(extra_lbs2),
+
+                // extra internal breakdown (NO markup)
+                Q2_machineCost_extra: round2(Q2_machineCost_extra),
+                R2_materialUseCost_internal_extra: round2(R2_materialUseCost_internal_extra),
+                S2_elecSpaceCost_extra: round2(S2_elecSpaceCost_extra),
+                T2_manufacturingCost_internal_extra: round2(T2_manufacturingCost_internal_extra),
+                U2_withFailRate_internal_extra: round2(U2_withFailRate_internal_extra),
+                W2_laborCost_internal_extra: round2(W2_laborCost_internal_extra),
+                extra_internal_cost: round2(extra_internal_cost),
+
+                // optional billable reference
                 W2_laborFees_billable: round2(W2_laborFees_billable),
-                W2_laborCost_internal: round2(W2_laborCost_internal),
-                U2_withFailRate: round2(U2_withFailRate),
+
+                // FINAL
                 V2_internalTotalCost: round2(V2_internalTotalCost),
               };
-
               const payloadData = {
                 ...(actuals?.data as any),
                 notes: notes_root,
@@ -498,13 +543,36 @@ export default async function ServiceAdjustmentPage({
                     </div>
 
                     <div>
-                      Materials:
-                      <div className="mt-1 text-neutral-100">
-                        • {materialLabel(qb_material1_id)} - {qb_material1_grams} g
-                      </div>
-                      <div className="text-neutral-100">
-                        • {materialLabel(qb_material2_id)} - {qb_material2_grams} g
-                      </div>
+                      {[
+                        {
+                          id: qb_material1_id,
+                          grams: qb_material1_grams,
+                        },
+                        {
+                          id: qb_material2_id,
+                          grams: qb_material2_grams,
+                        },
+                      ].filter((m) => m.grams > 0 && hasResolvedMaterial(m.id)).length > 0 ? (
+                        <>
+                          Materials:
+                          {[
+                            {
+                              id: qb_material1_id,
+                              grams: qb_material1_grams,
+                            },
+                            {
+                              id: qb_material2_id,
+                              grams: qb_material2_grams,
+                            },
+                          ]
+                            .filter((m) => m.grams > 0 && hasResolvedMaterial(m.id))
+                            .map((m) => (
+                              <div key={String(m.id)} className="mt-1 text-neutral-100">
+                                • {materialLabel(m.id)} - {m.grams} g
+                              </div>
+                            ))}
+                        </>
+                      ) : null}
                     </div>
 
                     {qbCalc ? (

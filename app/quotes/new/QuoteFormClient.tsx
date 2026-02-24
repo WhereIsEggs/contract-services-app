@@ -192,6 +192,8 @@ export default function QuoteFormClient({
 
         // R2 = (lbs1*rate1 + lbs2*rate2) * 1.65
         const R2_materialUseCost = (lbs1 * rate1 + lbs2 * rate2) * 1.65;
+        // Internal material cost (no 1.65 markup)
+        const R2_materialUseCost_internal = (lbs1 * rate1 + lbs2 * rate2);
 
         // S2 = D2*(electricity + space/consumables)
         const S2_elecSpaceCost =
@@ -199,6 +201,9 @@ export default function QuoteFormClient({
 
         // T2 = SUM(Q2:S2)
         const T2_manufacturingCost = Q2_machineCost + R2_materialUseCost + S2_elecSpaceCost;
+        // Internal manufacturing cost (no 1.65 markup)
+        const T2_manufacturingCost_internal =
+            Q2_machineCost + R2_materialUseCost_internal + S2_elecSpaceCost;
 
         // Billable labor fees (customer-facing rates)
         const W2_laborFees_billable =
@@ -216,6 +221,9 @@ export default function QuoteFormClient({
 
         // U2 = T2*(1+failure)
         const U2_withFailRate = T2_manufacturingCost * (1 + defaultFailureRate);
+        // Internal manufacturing with failure (no 1.65 markup)
+        const U2_withFailRate_internal =
+            T2_manufacturingCost_internal * (1 + defaultFailureRate);
 
         // V (pre-tax manufacturing with sales markup): U * (1 + markup)
         const V_preTaxManufacturing = U2_withFailRate * (1 + preTaxSaleMarkup);
@@ -232,7 +240,7 @@ export default function QuoteFormClient({
 
         // Profit/margin here is still based on contract printing internal cost,
         // but uses the full quote total so totals stay aligned visually.
-        const internalCost = U2_withFailRate + W2_laborCost_internal;
+        const internalCost = U2_withFailRate_internal + W2_laborCost_internal;
         const profit = X_totalNoDiscount_all - internalCost;
         const marginPct = X_totalNoDiscount_all > 0 ? profit / X_totalNoDiscount_all : 0;
 
@@ -246,11 +254,14 @@ export default function QuoteFormClient({
 
             Q2_machineCost: round2(Q2_machineCost),
             R2_materialUseCost: round2(R2_materialUseCost),
+            R2_materialUseCost_internal: round2(R2_materialUseCost_internal),
             S2_elecSpaceCost: round2(S2_elecSpaceCost),
             T2_manufacturingCost: round2(T2_manufacturingCost),
+            T2_manufacturingCost_internal: round2(T2_manufacturingCost_internal),
             W2_laborFees_billable: round2(W2_laborFees_billable),
             W2_laborCost_internal: round2(W2_laborCost_internal),
             U2_withFailRate: round2(U2_withFailRate),
+            U2_withFailRate_internal: round2(U2_withFailRate_internal),
             V_preTaxManufacturing: round2(V_preTaxManufacturing),
             X_totalNoDiscount: round2(X_totalNoDiscount),
 
@@ -596,18 +607,12 @@ export default function QuoteFormClient({
                                 <div className="mt-1 text-lg font-semibold text-white">
                                     {preview.lbs1.toFixed(2)} lb @ {money(preview.rate1)}/lb
                                 </div>
-                                <div className="text-sm text-neutral-400">
-                                    (includes 1.65 material factor)
-                                </div>
                             </div>
 
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Material 2</div>
                                 <div className="mt-1 text-lg font-semibold text-white">
                                     {preview.lbs2.toFixed(2)} lb @ {money(preview.rate2)}/lb
-                                </div>
-                                <div className="text-sm text-neutral-400">
-                                    (includes 1.65 material factor)
                                 </div>
                             </div>
                         </div>
@@ -616,9 +621,6 @@ export default function QuoteFormClient({
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Manufacturing cost</div>
                                 <div className="mt-1 text-lg font-semibold text-white">{money(preview.T2_manufacturingCost)}</div>
-                                <div className="text-xs text-neutral-500">
-                                    machine + material + electricity/space
-                                </div>
                             </div>
 
                             {svc.scanning ? (
@@ -660,26 +662,17 @@ export default function QuoteFormClient({
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Labor fees</div>
                                 <div className="mt-1 text-lg font-semibold text-white">{money(preview.W2_laborFees_billable)}</div>
-                                <div className="text-xs text-neutral-500">
-                                    support + setup + admin + monitoring
-                                </div>
                             </div>
 
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">With failure rate</div>
                                 <div className="mt-1 text-lg font-semibold text-white">{money(preview.U2_withFailRate)}</div>
-                                <div className="text-xs text-neutral-500">
-                                    failure default {(preview.defaultFailureRate * 100).toFixed(0)}%
-                                </div>
                             </div>
 
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                                 <div className="text-sm text-neutral-300">Internal cost</div>
                                 <div className="mt-1 text-lg font-semibold text-white">
-                                    {money(preview.U2_withFailRate + preview.W2_laborCost_internal)}
-                                </div>
-                                <div className="text-xs text-neutral-500">
-                                    internal cost basis (materials + machine + labor allocation)
+                                    {money(preview.internalCost)}
                                 </div>
                             </div>
 
@@ -687,18 +680,12 @@ export default function QuoteFormClient({
                                 <div className="text-sm text-neutral-300">Total price (no discount)</div>
                                 <div className="mt-1 text-lg font-semibold text-white">{money(preview.X_totalNoDiscount_all)}
                                 </div>
-                                <div className="text-xs text-neutral-500">
-                                    markup {(preview.preTaxSaleMarkup * 100).toFixed(0)}%
-                                </div>
                             </div>
 
                             <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                <div className="text-sm text-neutral-300">Profit / Margin</div>
+                                <div className="text-sm text-neutral-300">Profit</div>
                                 <div className="mt-1 text-lg font-semibold text-white">
                                     {money(preview.profit)}
-                                </div>
-                                <div className="text-xs text-neutral-500">
-                                    margin {(preview.marginPct * 100).toFixed(1)}%
                                 </div>
                             </div>
 
