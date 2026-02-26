@@ -4,6 +4,7 @@ import { updateServiceStepStatus } from "@/app/actions";
 import { notFound, redirect } from "next/navigation";
 import ProgressUpdateToggle from "@/app/components/ProgressUpdateToggle";
 import LinkedQuoteSelector from "@/app/requests/LinkedQuoteSelector";
+import ConfirmSubmitButton from "@/app/requests/ConfirmSubmitButton";
 
 function toNum(v: any) {
     const n = Number(v);
@@ -168,6 +169,21 @@ export default async function RequestDetailPage({
         (actualRows ?? []).map((r: any) => [String(r.service_id), r])
     );
 
+    const totalLeadDueMs = steps
+        .filter((s: any) => s.step_status !== "Completed")
+        .map((s: any) => {
+            const lead = (actualByServiceId.get(String(s.id))?.data as any)?.lead_time;
+            const dueMs = lead?.due_at ? Date.parse(String(lead.due_at)) : NaN;
+            return Number.isFinite(dueMs) ? dueMs : NaN;
+        })
+        .filter((n: number) => Number.isFinite(n))
+        .reduce((max: number, cur: number) => (cur > max ? cur : max), Number.NaN);
+
+    const requestCreatedMs = Date.parse(String((request as any).created_at ?? ""));
+    const totalLeadDays = Number.isFinite(totalLeadDueMs) && Number.isFinite(requestCreatedMs)
+        ? Math.max(0, Math.ceil((totalLeadDueMs - requestCreatedMs) / (24 * 60 * 60 * 1000)))
+        : null;
+
     // ---------------------------
     // Material lookup (Quoted + Actual CP extras)
     // ---------------------------
@@ -274,7 +290,7 @@ export default async function RequestDetailPage({
                                         />
 
                                         <div className="text-xs text-neutral-500">
-                                            Tip: Open the Quote Tool in another tab to copy details. (Quote detail view comes later.)
+                                            Tip: Use "Edit quote" to update hours/services as work progresses.
                                         </div>
                                     </>
                                 )}
@@ -294,7 +310,7 @@ export default async function RequestDetailPage({
                                                     <div className="flex flex-wrap items-center gap-2">
                                                         {/* Pause */}
                                                         <form
-                                                            action={async () => {
+                                                            action={async (formData: FormData) => {
                                                                 "use server";
 
                                                                 if (!activeStep?.id) return;
@@ -322,7 +338,7 @@ export default async function RequestDetailPage({
 
                                                         {/* Complete */}
                                                         <form
-                                                            action={async () => {
+                                                            action={async (formData: FormData) => {
                                                                 "use server";
 
                                                                 if (!activeStep?.id) return;
@@ -399,6 +415,21 @@ export default async function RequestDetailPage({
                                         </>
                                     ) : null}
 
+                                    <div className="mt-3 rounded-md border border-neutral-800 bg-neutral-950/30 px-3 py-2 text-xs text-neutral-400">
+                                        <div>
+                                            Total lead deadline:{" "}
+                                            {Number.isFinite(totalLeadDueMs)
+                                                ? new Date(totalLeadDueMs).toLocaleString(undefined, {
+                                                    dateStyle: "medium",
+                                                    timeStyle: "short",
+                                                })
+                                                : "—"}
+                                        </div>
+                                        <div className="mt-0.5">
+                                            Total lead time: {totalLeadDays != null ? `${totalLeadDays} day${totalLeadDays === 1 ? "" : "s"}` : "—"}
+                                        </div>
+                                    </div>
+
                                     <ul className="grid gap-2">
                                         {steps.map((svc: any) => (
                                             <li
@@ -407,6 +438,21 @@ export default async function RequestDetailPage({
                                             >
                                                 <div className="flex flex-col">
                                                     <span className="text-neutral-100">{svc.service_type}</span>
+
+                                                    {(() => {
+                                                        const lead = (actualByServiceId.get(String(svc.id))?.data as any)?.lead_time;
+                                                        const dueMs = lead?.due_at ? Date.parse(String(lead.due_at)) : NaN;
+                                                        const leadDays = Number(lead?.lead_days);
+                                                        return Number.isFinite(dueMs) ? (
+                                                            <div className="mt-1 text-xs text-neutral-400">
+                                                                Lead: {Number.isFinite(leadDays) ? `${leadDays}d` : "—"} • Due{" "}
+                                                                {new Date(dueMs).toLocaleString(undefined, {
+                                                                    dateStyle: "medium",
+                                                                    timeStyle: "short",
+                                                                })}
+                                                            </div>
+                                                        ) : null;
+                                                    })()}
 
                                                     {svc.started_at || svc.step_status === "Waiting" || svc.completed_at ? (
                                                         <div className="mt-1 flex flex-col gap-0.5 text-xs text-neutral-500">
@@ -462,6 +508,54 @@ export default async function RequestDetailPage({
                                                 {svc.step_status !== "In Progress" && svc.notes ? (
                                                     <div className="col-span-2 mt-2 rounded-md border border-neutral-800 bg-neutral-950/30 px-3 py-2 text-xs text-neutral-300 whitespace-pre-wrap">
                                                         {svc.notes}
+                                                    </div>
+                                                ) : null}
+
+                                                {svc.step_status === "Completed" && !activeStep && !pausedStep ? (
+                                                    <div className="col-span-2 mt-2">
+                                                        <form
+                                                            action={async (formData: FormData) => {
+                                                                "use server";
+
+                                                                const restartNote = String(
+                                                                    formData.get("restart_note") ?? ""
+                                                                ).trim();
+
+                                                                if (!restartNote) {
+                                                                    throw new Error("Restart note is required.");
+                                                                }
+
+                                                                await updateServiceStepStatus(
+                                                                    svc.id,
+                                                                    "In Progress",
+                                                                    `Service restarted: ${restartNote}`
+                                                                );
+
+                                                                const supabase = await createClient();
+                                                                const { error } = await supabase
+                                                                    .from("requests")
+                                                                    .update({ overall_status: "In Progress" })
+                                                                    .eq("id", id);
+
+                                                                if (error) throw new Error(error.message);
+
+                                                                redirect(`/requests/${id}`);
+                                                            }}
+                                                            className="flex flex-wrap items-center gap-2"
+                                                        >
+                                                            <input
+                                                                name="restart_note"
+                                                                required
+                                                                defaultValue=""
+                                                                className="h-8 w-72 rounded-md border border-neutral-700 bg-neutral-950 px-2 text-xs text-neutral-100 placeholder-neutral-500"
+                                                                placeholder="Required restart note"
+                                                            />
+                                                            <ConfirmSubmitButton
+                                                                label="Restart service"
+                                                                confirmMessage="Reopen this completed service and mark it In Progress?"
+                                                                className="inline-flex h-8 items-center justify-center rounded-md border border-neutral-700 bg-neutral-900 px-3 text-xs font-medium text-neutral-200 hover:bg-neutral-800"
+                                                            />
+                                                        </form>
                                                     </div>
                                                 ) : null}
                                             </li>

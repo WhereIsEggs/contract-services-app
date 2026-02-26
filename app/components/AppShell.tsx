@@ -90,7 +90,7 @@ export default function AppShell({
                             </Link>
 
                             <Link
-                                href="/requests"
+                                href="/requests?sort=request&dir=desc"
                                 className={`rounded-md px-3 py-2 ${onRequestsFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white"
@@ -101,7 +101,7 @@ export default function AppShell({
 
 
                             <Link
-                                href="/requests?status=In%20Progress"
+                                href="/requests?status=In%20Progress&sort=request&dir=desc"
                                 className={`rounded-md px-3 py-2 ${onInProgressFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white"
@@ -111,7 +111,7 @@ export default function AppShell({
                             </Link>
 
                             <Link
-                                href="/requests?status=Completed"
+                                href="/requests?status=Completed&sort=request&dir=desc"
                                 className={`rounded-md px-3 py-2 ${onCompletedFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white"
@@ -121,7 +121,7 @@ export default function AppShell({
                             </Link>
 
                             <Link
-                                href="/requests?late=1"
+                                href="/requests?late=1&sort=request&dir=desc"
                                 className={`rounded-md px-3 py-2 ${onLateJobsFinal
                                     ? "bg-neutral-900 text-white"
                                     : "text-neutral-200 hover:bg-neutral-900 hover:text-white"

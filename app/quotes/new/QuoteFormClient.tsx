@@ -14,6 +14,21 @@ type MaterialOption = {
 
 type CostSettings = Record<string, number>;
 
+type InitialQuoteValues = {
+    printTimeHours: number;
+    scanLaborHours: number;
+    designLaborHours: number;
+    testLaborHours: number;
+    material1Id: string;
+    material1Grams: number;
+    material2Id: string;
+    material2Grams: number;
+    supportRemovalTimeHrs: number;
+    setupTimeHrs: number;
+    adminTimeHrs: number;
+    notes: string;
+};
+
 function toNum(v: any) {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
@@ -37,6 +52,8 @@ export default function QuoteFormClient({
     fromRequest,
     initialCustomerName,
     initialJobName,
+    editingQuoteId,
+    initialValues,
 }: {
     materials: MaterialOption[];
     settings: CostSettings;
@@ -50,6 +67,8 @@ export default function QuoteFormClient({
     fromRequest: string;
     initialCustomerName?: string;
     initialJobName?: string;
+    editingQuoteId?: string;
+    initialValues?: InitialQuoteValues;
 }) {
     const [svc, setSvc] = useState(() => initialSvc);
 
@@ -136,20 +155,37 @@ export default function QuoteFormClient({
         };
     }, []);
 
-    const [printTimeHours, setPrintTimeHours] = useState(0);
-    const [scanLaborHours, setScanLaborHours] = useState(0);
-    const [designLaborHours, setDesignLaborHours] = useState(0);
-    const [testLaborHours, setTestLaborHours] = useState(0);
+    const [printTimeHours, setPrintTimeHours] = useState(() => initialValues?.printTimeHours ?? 0);
+    const [scanLaborHours, setScanLaborHours] = useState(() => initialValues?.scanLaborHours ?? 0);
+    const [designLaborHours, setDesignLaborHours] = useState(() => initialValues?.designLaborHours ?? 0);
+    const [testLaborHours, setTestLaborHours] = useState(() => initialValues?.testLaborHours ?? 0);
 
-    const [material1Id, setMaterial1Id] = useState("");
-    const [material1Grams, setMaterial1Grams] = useState(0);
+    const [material1Id, setMaterial1Id] = useState(() => initialValues?.material1Id ?? "");
+    const [material1Grams, setMaterial1Grams] = useState(() => initialValues?.material1Grams ?? 0);
 
-    const [material2Id, setMaterial2Id] = useState("");
-    const [material2Grams, setMaterial2Grams] = useState(0);
+    const [material2Id, setMaterial2Id] = useState(() => initialValues?.material2Id ?? "");
+    const [material2Grams, setMaterial2Grams] = useState(() => initialValues?.material2Grams ?? 0);
 
-    const [supportRemovalTimeHrs, setSupportRemovalTimeHrs] = useState(0);
-    const [setupTimeHrs, setSetupTimeHrs] = useState(0);
-    const [adminTimeHrs, setAdminTimeHrs] = useState(0);
+    const [supportRemovalTimeHrs, setSupportRemovalTimeHrs] = useState(() => initialValues?.supportRemovalTimeHrs ?? 0);
+    const [setupTimeHrs, setSetupTimeHrs] = useState(() => initialValues?.setupTimeHrs ?? 0);
+    const [adminTimeHrs, setAdminTimeHrs] = useState(() => initialValues?.adminTimeHrs ?? 0);
+
+    useEffect(() => {
+        setPrintTimeHours(initialValues?.printTimeHours ?? 0);
+        setScanLaborHours(initialValues?.scanLaborHours ?? 0);
+        setDesignLaborHours(initialValues?.designLaborHours ?? 0);
+        setTestLaborHours(initialValues?.testLaborHours ?? 0);
+
+        setMaterial1Id(initialValues?.material1Id ?? "");
+        setMaterial1Grams(initialValues?.material1Grams ?? 0);
+
+        setMaterial2Id(initialValues?.material2Id ?? "");
+        setMaterial2Grams(initialValues?.material2Grams ?? 0);
+
+        setSupportRemovalTimeHrs(initialValues?.supportRemovalTimeHrs ?? 0);
+        setSetupTimeHrs(initialValues?.setupTimeHrs ?? 0);
+        setAdminTimeHrs(initialValues?.adminTimeHrs ?? 0);
+    }, [initialValues]);
 
     const getSetting = (key: string, fallback: number) => {
         const v = settings?.[key];
@@ -359,6 +395,7 @@ export default function QuoteFormClient({
 
             <form action={action} className="grid gap-4">
                 {fromRequest ? <input type="hidden" name="from_request_id" value={fromRequest} /> : null}
+                {editingQuoteId ? <input type="hidden" name="editing_quote_id" value={editingQuoteId} /> : null}
 
                 <div className="grid gap-3 md:grid-cols-2">
                     <label className="grid gap-1">
@@ -437,7 +474,7 @@ export default function QuoteFormClient({
                                     type="number"
                                     step="0.01"
                                     min="0"
-                                    defaultValue="0"
+                                    defaultValue={initialValues?.printTimeHours ?? 0}
                                     onChange={(e) => setPrintTimeHours(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setPrintTimeHours)}
                                     className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -452,7 +489,7 @@ export default function QuoteFormClient({
                                     type="number"
                                     step="0.01"
                                     min="0"
-                                    defaultValue="0"
+                                    defaultValue={initialValues?.supportRemovalTimeHrs ?? 0}
                                     onChange={(e) => setSupportRemovalTimeHrs(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setSupportRemovalTimeHrs)}
                                     className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -467,7 +504,7 @@ export default function QuoteFormClient({
                                     type="number"
                                     step="0.01"
                                     min="0"
-                                    defaultValue="0"
+                                    defaultValue={initialValues?.setupTimeHrs ?? 0}
                                     onChange={(e) => setSetupTimeHrs(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setSetupTimeHrs)}
                                     className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -482,7 +519,7 @@ export default function QuoteFormClient({
                                     type="number"
                                     step="0.01"
                                     min="0"
-                                    defaultValue="0"
+                                    defaultValue={initialValues?.adminTimeHrs ?? 0}
                                     onChange={(e) => setAdminTimeHrs(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setAdminTimeHrs)}
                                     className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -530,7 +567,7 @@ export default function QuoteFormClient({
                                             type="number"
                                             step="0.01"
                                             min="0"
-                                            defaultValue="0"
+                                            defaultValue={initialValues?.material1Grams ?? 0}
                                             onChange={(e) => setMaterial1Grams(toNum(e.target.value))}
                                             onBlur={(e) => coerceBlankNumberToZero(e, setMaterial1Grams)}
                                             className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -578,7 +615,7 @@ export default function QuoteFormClient({
                                             type="number"
                                             step="0.01"
                                             min="0"
-                                            defaultValue="0"
+                                            defaultValue={initialValues?.material2Grams ?? 0}
                                             onChange={(e) => setMaterial2Grams(toNum(e.target.value))}
                                             onBlur={(e) => coerceBlankNumberToZero(e, setMaterial2Grams)}
                                             className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -591,51 +628,51 @@ export default function QuoteFormClient({
                 )}
 
                 {otherSelectedCount > 0 && (
-                    <div className={`grid gap-3 ${otherGridColsClass}`}>
+                    <div className={`grid min-w-0 gap-3 ${otherGridColsClass}`}>
                         {svc.scanning && (
-                            <label className="grid gap-1 rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
+                            <label className="grid min-w-0 gap-1 rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
                                 <span className="text-xs text-neutral-400">Scanning labor hours</span>
                                 <input
                                     name="scan_labor_hours"
                                     type="number"
                                     step="0.01"
                                     min="0"
-                                    defaultValue="0"
+                                    defaultValue={initialValues?.scanLaborHours ?? 0}
                                     onChange={(e) => setScanLaborHours(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setScanLaborHours)}
-                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                             </label>
                         )}
 
                         {svc.design && (
-                            <label className="grid gap-1 rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
+                            <label className="grid min-w-0 gap-1 rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
                                 <span className="text-xs text-neutral-400">Design labor hours</span>
                                 <input
                                     name="design_labor_hours"
                                     type="number"
                                     step="0.01"
                                     min="0"
-                                    defaultValue="0"
+                                    defaultValue={initialValues?.designLaborHours ?? 0}
                                     onChange={(e) => setDesignLaborHours(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setDesignLaborHours)}
-                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                             </label>
                         )}
 
                         {svc.testing && (
-                            <label className="grid gap-1 rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
+                            <label className="grid min-w-0 gap-1 rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
                                 <span className="text-xs text-neutral-400">Testing labor hours</span>
                                 <input
                                     name="test_labor_hours"
                                     type="number"
                                     step="0.01"
                                     min="0"
-                                    defaultValue="0"
+                                    defaultValue={initialValues?.testLaborHours ?? 0}
                                     onChange={(e) => setTestLaborHours(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setTestLaborHours)}
-                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                             </label>
                         )}
@@ -646,167 +683,123 @@ export default function QuoteFormClient({
                     <div className="rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
                         <div className="mb-2 text-sm font-medium text-neutral-200">Preview</div>
 
-                        {/* Only show Contract Printing-specific preview blocks if Contract Printing is selected */}
-                        {svc.contract_printing ? (
-                            <div className="grid gap-3 md:grid-cols-2">
-                                <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                    <div className="text-sm text-neutral-300">Material 1</div>
-                                    <div className="mt-1 text-lg font-semibold text-white">
-                                        {preview.lbs1.toFixed(2)} lb @ {money(preview.rate1)}/lb
+                        <div className="mt-3 grid items-start gap-2">
+                            {svc.testing ? (
+                                <div className="rounded-xl border border-neutral-700 bg-neutral-950/40 p-3 shadow-sm">
+                                    <div className="text-sm font-medium text-neutral-200">Material Testing</div>
+                                    <div className="mt-1 text-xs text-neutral-500">
+                                        {testLaborHours.toFixed(2)} hrs @ {money(preview.testingBillableRate)}/hr
                                     </div>
-                                </div>
-
-                                <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                    <div className="text-sm text-neutral-300">Material 2</div>
-                                    <div className="mt-1 text-lg font-semibold text-white">
-                                        {preview.lbs2.toFixed(2)} lb @ {money(preview.rate2)}/lb
-                                    </div>
-                                </div>
-                            </div>
-                        ) : null}
-
-                        <div className="mt-3 grid gap-2 md:grid-cols-2">
-                            {svc.contract_printing ? (
-                                <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                    <div className="text-sm text-neutral-300">Manufacturing cost</div>
-                                    <div className="mt-1 text-lg font-semibold text-white">
-                                        {money(preview.T2_manufacturingCost)}
+                                    <div className="mt-3 grid gap-2 border-t border-neutral-700 pt-2 md:grid-cols-2">
+                                        <div>
+                                            <div className="text-xs text-neutral-500">Internal cost</div>
+                                            <div className="text-lg font-semibold text-white">{money(preview.testingInternalTotal)}</div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-xs text-neutral-500">Total cost</div>
+                                            <div className="text-lg font-semibold text-white">{money(preview.testingTotal)}</div>
+                                        </div>
                                     </div>
                                 </div>
                             ) : null}
 
                             {svc.scanning ? (
-                                <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                    <div className="text-sm text-neutral-300">3D Scanning</div>
-                                    <div className="mt-1 text-lg font-semibold text-white">{money(preview.scanningTotal)}</div>
-                                    <div className="text-xs text-neutral-500">
+                                <div className="rounded-xl border border-neutral-700 bg-neutral-950/40 p-3 shadow-sm">
+                                    <div className="text-sm font-medium text-neutral-200">3D Scanning</div>
+                                    <div className="mt-1 text-xs text-neutral-500">
                                         {scanLaborHours.toFixed(2)} hrs @ {money(preview.scanningBillableRate)}/hr
+                                    </div>
+                                    <div className="mt-3 grid gap-2 border-t border-neutral-700 pt-2 md:grid-cols-2">
+                                        <div>
+                                            <div className="text-xs text-neutral-500">Internal cost</div>
+                                            <div className="text-lg font-semibold text-white">{money(preview.scanningInternalTotal)}</div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-xs text-neutral-500">Total cost</div>
+                                            <div className="text-lg font-semibold text-white">{money(preview.scanningTotal)}</div>
+                                        </div>
                                     </div>
                                 </div>
                             ) : null}
 
                             {svc.design ? (
-                                <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                    <div className="text-sm text-neutral-300">3D Design</div>
-                                    <div className="mt-1 text-lg font-semibold text-white">{money(preview.designTotal)}</div>
-                                    <div className="text-xs text-neutral-500">
+                                <div className="rounded-xl border border-neutral-700 bg-neutral-950/40 p-3 shadow-sm">
+                                    <div className="text-sm font-medium text-neutral-200">3D Design</div>
+                                    <div className="mt-1 text-xs text-neutral-500">
                                         {designLaborHours.toFixed(2)} hrs @ {money(preview.designBillableRate)}/hr
                                     </div>
-                                </div>
-                            ) : null}
-
-                            {svc.testing ? (
-                                <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                    <div className="text-sm text-neutral-300">Material Testing</div>
-                                    <div className="mt-1 text-lg font-semibold text-white">{money(preview.testingTotal)}</div>
-                                    <div className="text-xs text-neutral-500">
-                                        {testLaborHours.toFixed(2)} hrs @ {money(preview.testingBillableRate)}/hr
+                                    <div className="mt-3 grid gap-2 border-t border-neutral-700 pt-2 md:grid-cols-2">
+                                        <div>
+                                            <div className="text-xs text-neutral-500">Internal cost</div>
+                                            <div className="text-lg font-semibold text-white">{money(preview.designInternalTotal)}</div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-xs text-neutral-500">Total cost</div>
+                                            <div className="text-lg font-semibold text-white">{money(preview.designTotal)}</div>
+                                        </div>
                                     </div>
                                 </div>
                             ) : null}
 
                             {svc.contract_printing ? (
-                                <>
-                                    <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                        <div className="text-sm text-neutral-300">Labor fees</div>
-                                        <div className="mt-1 text-lg font-semibold text-white">
-                                            {money(preview.W2_laborFees_billable)}
-                                        </div>
-                                    </div>
+                                <div className="rounded-xl border border-neutral-700 bg-neutral-950/40 p-3 shadow-sm">
+                                    <div className="text-sm font-medium text-neutral-200">Contract Printing</div>
 
-                                    <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                        <div className="text-sm text-neutral-300">With failure rate</div>
-                                        <div className="mt-1 text-lg font-semibold text-white">
-                                            {money(preview.U2_withFailRate)}
-                                        </div>
-                                    </div>
-
-                                    <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                        <div className="text-sm text-neutral-300">Total internal cost</div>
-
-                                        {/* Line items (only show selected services) */}
-                                        <div className="mt-2 space-y-2 text-sm">
-                                            {svc.contract_printing ? (
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div className="text-neutral-200">Contract Printing</div>
-                                                    <div className="font-semibold text-white">
-                                                        {money(preview.contractPrintingInternalCost)}
-                                                    </div>
-                                                </div>
-                                            ) : null}
-
-                                            {svc.scanning ? (
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div className="text-neutral-200">
-                                                        3D Scanning
-                                                        <div className="text-xs text-neutral-500">
-                                                            {scanLaborHours.toFixed(2)} hrs @ {money(preview.scanningInternalRate)}/hr
-                                                        </div>
-                                                    </div>
-                                                    <div className="font-semibold text-white">
-                                                        {money(preview.scanningInternalTotal)}
-                                                    </div>
-                                                </div>
-                                            ) : null}
-
-                                            {svc.design ? (
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div className="text-neutral-200">
-                                                        3D Design
-                                                        <div className="text-xs text-neutral-500">
-                                                            {designLaborHours.toFixed(2)} hrs @ {money(preview.designInternalRate)}/hr
-                                                        </div>
-                                                    </div>
-                                                    <div className="font-semibold text-white">
-                                                        {money(preview.designInternalTotal)}
-                                                    </div>
-                                                </div>
-                                            ) : null}
-
-                                            {svc.testing ? (
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <div className="text-neutral-200">
-                                                        Material Testing
-                                                        <div className="text-xs text-neutral-500">
-                                                            {testLaborHours.toFixed(2)} hrs @ {money(preview.testingInternalRate)}/hr
-                                                        </div>
-                                                    </div>
-                                                    <div className="font-semibold text-white">
-                                                        {money(preview.testingInternalTotal)}
-                                                    </div>
-                                                </div>
-                                            ) : null}
-                                        </div>
-
-                                        {/* Total */}
-                                        <div className="mt-3 border-t border-neutral-800 pt-2">
-                                            <div className="flex items-center justify-between">
-                                                <div className="text-sm text-neutral-300">Total</div>
-                                                <div className="text-lg font-semibold text-white">
-                                                    {money(preview.internalCostAll)}
-                                                </div>
+                                    <div className="mt-2 space-y-2 text-sm">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="text-neutral-200">Material 1</div>
+                                            <div className="font-semibold text-white">
+                                                {preview.lbs1.toFixed(2)} lb @ {money(preview.rate1)}/lb
                                             </div>
                                         </div>
-                                    </div>
-                                    <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                        <div className="text-sm text-neutral-300">Profit</div>
-                                        <div className="mt-1 text-lg font-semibold text-white">
-                                            {money(preview.profit)}
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="text-neutral-200">Material 2</div>
+                                            <div className="font-semibold text-white">
+                                                {preview.lbs2.toFixed(2)} lb @ {money(preview.rate2)}/lb
+                                            </div>
+                                        </div>
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="text-neutral-200">Manufacturing cost</div>
+                                            <div className="font-semibold text-white">{money(preview.T2_manufacturingCost)}</div>
+                                        </div>
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="text-neutral-200">Labor fees</div>
+                                            <div className="font-semibold text-white">{money(preview.W2_laborFees_billable)}</div>
+                                        </div>
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="text-neutral-200">With failure rate</div>
+                                            <div className="font-semibold text-white">{money(preview.U2_withFailRate)}</div>
                                         </div>
                                     </div>
-                                </>
+
+                                    <div className="mt-3 grid gap-2 border-t border-neutral-700 pt-2 md:grid-cols-2">
+                                        <div>
+                                            <div className="text-xs text-neutral-500">Internal cost</div>
+                                            <div className="text-lg font-semibold text-white">
+                                                {money(preview.contractPrintingInternalCost)}
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-xs text-neutral-500">Total cost</div>
+                                            <div className="text-lg font-semibold text-white">{money(preview.X_totalNoDiscount)}</div>
+                                        </div>
+                                    </div>
+                                </div>
                             ) : null}
 
-                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                <div className="text-sm text-neutral-300">Total price (no discount)</div>
-                                <div className="mt-1 text-lg font-semibold text-white">
-                                    {money(preview.X_totalNoDiscount_all)}
+                            <div className="rounded-xl border border-neutral-700 bg-neutral-950/40 p-3 shadow-sm">
+                                <div className="text-sm font-medium text-neutral-200">Totals (All Selected Services)</div>
+                                <div className="mt-3 grid gap-2 border-t border-neutral-700 pt-2 md:grid-cols-2">
+                                    <div>
+                                        <div className="text-xs text-neutral-500">Total internal cost</div>
+                                        <div className="text-lg font-semibold text-white">{money(preview.internalCostAll)}</div>
+                                    </div>
+                                    <div className="flex h-full flex-col text-right">
+                                        <div className="text-xs text-neutral-500">Total cost (no discount)</div>
+                                        <div className="mt-auto text-lg font-semibold text-white">{money(preview.X_totalNoDiscount_all)}</div>
+                                    </div>
                                 </div>
-                            </div>
-
-                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                <div className="text-sm text-neutral-300">Discounted / Expedited</div>
-                                <div className="mt-1 text-sm text-neutral-200">
+                                <div className="mt-2 text-sm text-neutral-200">
                                     Discount ({(preview.discountRate * 100).toFixed(0)}%):{" "}
                                     <span className="font-semibold text-white">{money(preview.discounted)}</span>
                                 </div>
@@ -827,6 +820,7 @@ export default function QuoteFormClient({
                     <textarea
                         name="notes"
                         rows={4}
+                        defaultValue={initialValues?.notes ?? ""}
                         className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="Any special considerations, assumptions, file notes, etc."
                     />

@@ -2,6 +2,7 @@
 
 import AppShell from "@/app/components/AppShell";
 import { createClient } from "@/app/lib/supabase/server";
+import { recalculateLeadTimesForOpenRequests } from "@/app/lib/lead-times";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
@@ -32,6 +33,23 @@ export default async function NewQuotePage({
 
     let initialCustomerName: string | undefined = undefined;
     let initialJobName: string | undefined = undefined;
+    let editingQuoteId: string | undefined = undefined;
+    let initialValues:
+        | {
+            printTimeHours: number;
+            scanLaborHours: number;
+            designLaborHours: number;
+            testLaborHours: number;
+            material1Id: string;
+            material1Grams: number;
+            material2Id: string;
+            material2Grams: number;
+            supportRemovalTimeHrs: number;
+            setupTimeHrs: number;
+            adminTimeHrs: number;
+            notes: string;
+        }
+        | undefined = undefined;
 
     if (fromRequest) {
         const { data: existingReq, error: existingReqErr } = await supabase
@@ -45,10 +63,7 @@ export default async function NewQuotePage({
             redirect(`/requests/${fromRequest}`);
         }
 
-        // If request already has a quote linked, bounce back to request detail page
-        if (existingReq.quote_id) {
-            redirect(`/requests/${fromRequest}`);
-        }
+        editingQuoteId = existingReq.quote_id ? String(existingReq.quote_id) : undefined;
 
         // Job name becomes the 5-digit Request Number (00001, 00002, etc.)
         const n = Number(existingReq.request_number);
@@ -61,28 +76,90 @@ export default async function NewQuotePage({
             initialCustomerName = String(existingReq.customer_name);
         }
 
-        // Preselect services based on request_services rows (if present)
-        const { data: rows, error: svcErr } = await supabase
-            .from("request_services")
-            .select("service_type")
-            .eq("request_id", fromRequest);
+        if (editingQuoteId) {
+            const { data: quoteRow, error: quoteErr } = await supabase
+                .from("quotes")
+                .select(
+                    `
+                    id,
+                    customer_name,
+                    job_name,
+                    notes,
+                    quote_items (
+                        service_type,
+                        labor_hours,
+                        print_time_hours,
+                        params
+                    )
+                `
+                )
+                .eq("id", editingQuoteId)
+                .single();
 
-        if (!svcErr && rows && rows.length > 0) {
+            if (quoteErr || !quoteRow) {
+                redirect(`/requests/${fromRequest}`);
+            }
+
+            const items = ((quoteRow as any).quote_items ?? []) as any[];
+            const contractItem =
+                items.find((i) => String(i.service_type) === "CONTRACT_PRINTING") ?? null;
+            const scanningItem =
+                items.find((i) => String(i.service_type) === "3D_SCANNING") ?? null;
+            const designItem =
+                items.find((i) => String(i.service_type) === "3D_DESIGN") ?? null;
+            const testingItem =
+                items.find((i) => String(i.service_type) === "MATERIAL_TESTING") ?? null;
+
+            const cp = (contractItem?.params ?? {}) as any;
+
             initialSvc = {
-                contract_printing: false,
-                scanning: false,
-                design: false,
-                testing: false,
+                contract_printing: Boolean(contractItem),
+                scanning: Boolean(scanningItem),
+                design: Boolean(designItem),
+                testing: Boolean(testingItem),
             };
 
-            for (const r of rows) {
-                const t = String((r as any)?.service_type ?? "").trim();
+            initialCustomerName = String((quoteRow as any).customer_name ?? initialCustomerName ?? "");
+            initialJobName = String((quoteRow as any).job_name ?? initialJobName ?? "");
 
-                if (t === "Contract Print" || t === "Contract Printing")
-                    initialSvc.contract_printing = true;
-                if (t === "3D Scanning") initialSvc.scanning = true;
-                if (t === "3D Design") initialSvc.design = true;
-                if (t === "Material Testing") initialSvc.testing = true;
+            initialValues = {
+                printTimeHours: toNum(contractItem?.print_time_hours),
+                scanLaborHours: toNum(scanningItem?.labor_hours),
+                designLaborHours: toNum(designItem?.labor_hours),
+                testLaborHours: toNum(testingItem?.labor_hours),
+                material1Id: String(cp?.material1_id ?? ""),
+                material1Grams: toNum(cp?.material1_grams),
+                material2Id: String(cp?.material2_id ?? ""),
+                material2Grams: toNum(cp?.material2_grams),
+                supportRemovalTimeHrs: toNum(cp?.support_removal_hours),
+                setupTimeHrs: toNum(cp?.setup_hours),
+                adminTimeHrs: toNum(cp?.admin_hours),
+                notes: String((quoteRow as any).notes ?? ""),
+            };
+        } else {
+            // Preselect services based on request_services rows (if present)
+            const { data: rows, error: svcErr } = await supabase
+                .from("request_services")
+                .select("service_type")
+                .eq("request_id", fromRequest);
+
+            if (!svcErr && rows && rows.length > 0) {
+                initialSvc = {
+                    contract_printing: false,
+                    scanning: false,
+                    design: false,
+                    testing: false,
+                };
+
+                for (const r of rows) {
+                    const t = String((r as any)?.service_type ?? "").trim();
+
+                    if (t === "Contract Print" || t === "Contract Printing")
+                        initialSvc.contract_printing = true;
+                    if (t === "3D Scanning") initialSvc.scanning = true;
+                    if (t === "3D Design") initialSvc.design = true;
+                    if (t === "Material Testing") initialSvc.testing = true;
+                }
             }
         }
     }
@@ -108,10 +185,6 @@ export default async function NewQuotePage({
             <div className="mx-auto w-full max-w-3xl">
                 <div className="mb-6">
                     <h1 className="text-2xl font-semibold">New Quote</h1>
-                    <p className="mt-1 text-sm text-neutral-400">
-                        Skeleton quote entry (store inputs now; pricing logic later). Supports
-                        multiple services via line items.
-                    </p>
                 </div>
 
                 {sp?.msg && (
@@ -142,6 +215,8 @@ export default async function NewQuotePage({
                     fromRequest={fromRequest}
                     initialCustomerName={initialCustomerName}
                     initialJobName={initialJobName}
+                    editingQuoteId={editingQuoteId}
+                    initialValues={initialValues}
                 />
             </div>
         </AppShell>
@@ -172,6 +247,8 @@ async function createQuote(formData: FormData) {
     const supabase = await createClient();
 
     try {
+        const editing_quote_id =
+            String(formData.get("editing_quote_id") ?? "").trim() || null;
         const customer_name = String(formData.get("customer_name") ?? "").trim();
         const job_name = String(formData.get("job_name") ?? "").trim();
         const from_request_id =
@@ -303,21 +380,45 @@ async function createQuote(formData: FormData) {
         const monitoringInternalRate = getSetting("monitoring_internal_rate", 0);
 
         // =========================
-        // 1) Insert quote header
+        // 1) Insert or update quote header
         // =========================
-        const { data: quoteRow, error: quoteErr } = await supabase
-            .from("quotes")
-            .insert({
-                customer_name,
-                job_name,
-                notes: notes_raw.length ? notes_raw : null,
-            })
-            .select("id")
-            .single();
+        let quote_id = "";
 
-        if (quoteErr) throw new Error(quoteErr.message);
+        if (editing_quote_id) {
+            const { error: quoteUpdateErr } = await supabase
+                .from("quotes")
+                .update({
+                    customer_name,
+                    job_name,
+                    notes: notes_raw.length ? notes_raw : null,
+                })
+                .eq("id", editing_quote_id);
 
-        const quote_id = quoteRow.id as string;
+            if (quoteUpdateErr) throw new Error(quoteUpdateErr.message);
+
+            quote_id = editing_quote_id;
+
+            const { error: deleteItemsErr } = await supabase
+                .from("quote_items")
+                .delete()
+                .eq("quote_id", quote_id);
+
+            if (deleteItemsErr) throw new Error(deleteItemsErr.message);
+        } else {
+            const { data: quoteRow, error: quoteErr } = await supabase
+                .from("quotes")
+                .insert({
+                    customer_name,
+                    job_name,
+                    notes: notes_raw.length ? notes_raw : null,
+                })
+                .select("id")
+                .single();
+
+            if (quoteErr) throw new Error(quoteErr.message);
+            quote_id = quoteRow.id as string;
+        }
+
         console.log("[createQuote] quote_id =", quote_id, "from_request_id =", from_request_id);
 
         // Link quote to request (if coming from request)
@@ -488,27 +589,36 @@ async function createQuote(formData: FormData) {
             });
         }
 
-        const { data: insertedItems, error: itemsErr } = await supabase
-            .from("quote_items")
-            .insert(items)
-            .select("id, service_type, created_at, params");
+        if (items.length > 0) {
+            const { data: insertedItems, error: itemsErr } = await supabase
+                .from("quote_items")
+                .insert(items)
+                .select("id, service_type, created_at, params");
 
-        if (itemsErr) throw new Error(itemsErr.message);
+            if (itemsErr) throw new Error(itemsErr.message);
 
-        console.log(
-            "[createQuote] inserted quote_items:",
-            (insertedItems ?? []).map((it: any) => ({
-                id: it.id,
-                service_type: it.service_type,
-                created_at: it.created_at,
-                admin_hours: it.params?.admin_hours,
-                setup_hours: it.params?.setup_hours,
-                support_removal_hours: it.params?.support_removal_hours,
-            }))
-        );
+            console.log(
+                "[createQuote] inserted quote_items:",
+                (insertedItems ?? []).map((it: any) => ({
+                    id: it.id,
+                    service_type: it.service_type,
+                    created_at: it.created_at,
+                    admin_hours: it.params?.admin_hours,
+                    setup_hours: it.params?.setup_hours,
+                    support_removal_hours: it.params?.support_removal_hours,
+                }))
+            );
+        }
+
+        await recalculateLeadTimesForOpenRequests(supabase);
+
         // Done
         revalidatePath("/quotes/new");
+        revalidatePath(`/quotes/${quote_id}`);
         if (from_request_id) redirect(`/requests/${from_request_id}`);
+        if (editing_quote_id) {
+            redirect(`/quotes/${quote_id}`);
+        }
         redirect("/quotes/new?msg=Quote%20saved");
     } catch (e: any) {
         if (isRedirectError(e)) throw e;

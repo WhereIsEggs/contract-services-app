@@ -2,6 +2,7 @@ import { createClient } from "@/app/lib/supabase/server";
 import AppShell from "@/app/components/AppShell";
 import { notFound, redirect } from "next/navigation";
 import ContractPrintAdjustClient from "./ContractPrintAdjustClient";
+import { updateServiceStepStatus } from "@/app/actions";
 
 function msToHours(ms: number) {
   if (!Number.isFinite(ms) || ms <= 0) return 0;
@@ -51,10 +52,10 @@ export default async function ServiceAdjustmentPage({
 
   const isContractPrint = service.service_type === "Contract Print";
 
-  // Auto hours (basic: started -> completed). Pause subtraction comes later.
+  // Auto hours = active time (Started -> Completed) minus cumulative paused time.
   const startedAt = service.started_at ? new Date(service.started_at).getTime() : null;
   const completedAt = service.completed_at ? new Date(service.completed_at).getTime() : null;
-  const autoHours = startedAt && completedAt ? msToHours(completedAt - startedAt) : 0;
+  const elapsedMs = startedAt && completedAt ? Math.max(0, completedAt - startedAt) : 0;
 
   // Load existing actuals if present
   const { data: actuals } = await supabase
@@ -63,10 +64,20 @@ export default async function ServiceAdjustmentPage({
     .eq("service_id", serviceId)
     .maybeSingle();
 
+  const pausedMs = toNum((actuals?.data as any)?.timing?.total_paused_ms ?? 0);
+  const priorCompletedMs = toNum((actuals?.data as any)?.timing?.prior_completed_ms ?? 0);
+  const currentCycleActiveMs = Math.max(0, elapsedMs - pausedMs);
+  const autoHours = msToHours(priorCompletedMs + currentCycleActiveMs);
+
   const existingNonPrintHours =
     actuals?.actual_hours !== null && actuals?.actual_hours !== undefined
       ? Number(actuals.actual_hours)
       : autoHours;
+
+  const existingNonPrintOverrideHours = toNum(
+    (actuals?.data as any)?.non_print_override_hours ??
+    (existingNonPrintHours !== autoHours ? existingNonPrintHours : 0)
+  );
 
   const existingNotes = (actuals?.data as any)?.notes ?? "";
   const existingCP = (actuals?.data as any)?.contract_print ?? null;
@@ -453,11 +464,17 @@ export default async function ServiceAdjustmentPage({
             }
 
             // ---------- Non-print (simple hours) ----------
-            const actual_hours = toNum(formData.get("actual_hours"));
+            const override_hours = toNum(formData.get("override_hours"));
+            const actual_hours = override_hours > 0 ? override_hours : autoHours;
 
             const payloadData = {
               ...(actuals?.data as any),
               notes: notes_root || String(formData.get("notes") ?? "").trim(),
+              non_print_override_hours: override_hours,
+              timing: {
+                ...((actuals?.data as any)?.timing ?? {}),
+                total_paused_ms: Math.round(pausedMs),
+              },
             };
 
             const { error } = await supabase.from("service_actuals").upsert(
@@ -481,19 +498,28 @@ export default async function ServiceAdjustmentPage({
 
               <div className="grid gap-4">
                 <div className="text-sm text-neutral-400">
-                  Auto-calculated from Started → Completed (pause subtraction coming next)
+                  Auto-calculated active hours = Started → Completed minus paused time
                 </div>
 
                 <div className="grid gap-2">
-                  <label className="text-sm">Actual labor time (hours)</label>
+                  <label className="text-sm">Manual override hours (optional)</label>
                   <input
-                    name="actual_hours"
-                    defaultValue={existingNonPrintHours.toFixed(2)}
+                    name="override_hours"
+                    defaultValue={existingNonPrintOverrideHours.toFixed(2)}
                     inputMode="decimal"
                     className="h-10 w-48 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100"
                   />
                   <div className="text-xs text-neutral-500">
                     Auto-calculated: {autoHours.toFixed(2)} hours
+                  </div>
+                  <div className="text-xs text-neutral-500">
+                    Prior completed time: {msToHours(priorCompletedMs).toFixed(2)} hours
+                  </div>
+                  <div className="text-xs text-neutral-500">
+                    Paused time removed: {msToHours(pausedMs).toFixed(2)} hours
+                  </div>
+                  <div className="text-xs text-neutral-500">
+                    Non-zero override value replaces auto-calculated hours.
                   </div>
                 </div>
 
@@ -612,12 +638,27 @@ export default async function ServiceAdjustmentPage({
               Save Actuals
             </button>
 
-            <a
-              href={`/requests/${id}`}
+            <button
+              type="submit"
+              formAction={async () => {
+                "use server";
+
+                await updateServiceStepStatus(serviceId, "In Progress");
+
+                const supabase = await createClient();
+                const { error } = await supabase
+                  .from("requests")
+                  .update({ overall_status: "In Progress" })
+                  .eq("id", id);
+
+                if (error) throw new Error(error.message);
+
+                redirect(`/requests/${id}`);
+              }}
               className="h-10 inline-flex items-center rounded-md border border-neutral-700 px-4 text-sm text-neutral-300"
             >
               Cancel
-            </a>
+            </button>
           </div>
         </form>
       </div>

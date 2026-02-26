@@ -36,6 +36,15 @@ export default function LinkedQuoteSelector({
                 >
                     View quote
                 </Link>
+                <button
+                    type="button"
+                    onClick={() => {
+                        router.push(`/quotes/new?fromRequest=${encodeURIComponent(requestId)}`);
+                    }}
+                    className="inline-flex h-8 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950 px-3 text-xs font-medium text-neutral-200 hover:bg-neutral-900"
+                >
+                    Edit quote
+                </button>
             </div>
         );
     }

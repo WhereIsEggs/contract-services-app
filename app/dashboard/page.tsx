@@ -17,6 +17,7 @@ export default async function DashboardPage() {
     overall_status,
     created_at,
     request_services (
+            id,
       service_type,
       step_status,
       sort_order,
@@ -190,8 +191,38 @@ export default async function DashboardPage() {
             .slice(0, 5);
     })();
 
-    // Placeholder (you’ll wire this later)
-    const lateJobsCount = 0;
+    const allStepIds = rows.flatMap((r: any) =>
+        Array.isArray(r.request_services)
+            ? (r.request_services as any[])
+                .map((s: any) => String(s.id ?? ""))
+                .filter(Boolean)
+            : []
+    );
+
+    const { data: actualRows } = allStepIds.length
+        ? await supabase
+            .from("service_actuals")
+            .select("service_id, data")
+            .in("service_id", allStepIds)
+        : { data: [] as any[] };
+
+    const leadByServiceId = new Map<string, any>(
+        (actualRows ?? []).map((r: any) => [String(r.service_id), (r?.data as any)?.lead_time ?? null])
+    );
+
+    const nowMs = Date.now();
+
+    const lateJobsCount = rows.filter((r: any) => {
+        if (r.overall_status === "Completed") return false;
+        const steps = Array.isArray(r.request_services) ? (r.request_services as any[]) : [];
+
+        return steps.some((s: any) => {
+            if (String(s.step_status ?? "") === "Completed") return false;
+            const lead = leadByServiceId.get(String(s.id ?? ""));
+            const dueMs = lead?.due_at ? Date.parse(String(lead.due_at)) : NaN;
+            return Number.isFinite(dueMs) && dueMs < nowMs;
+        });
+    }).length;
 
     return (
         <AppShell title="Dashboard" hideHeaderTitle>
@@ -211,7 +242,7 @@ export default async function DashboardPage() {
                 <section>
                     <div className="grid gap-4 sm:grid-cols-3">
                         <Link
-                            href="/requests?status=In%20Progress"
+                            href="/requests?status=In%20Progress&sort=request&dir=desc"
                             className="block transform rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 hover:bg-neutral-900 hover:-translate-y-0.5 transition-transform border-l-4 border-l-blue-500"
                         >
                             <div className="text-xs text-neutral-400">In Progress</div>
@@ -219,7 +250,7 @@ export default async function DashboardPage() {
                         </Link>
 
                         <Link
-                            href="/requests?status=In%20Progress"
+                            href="/requests?status=In%20Progress&sort=request&dir=desc"
                             className="block transform rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 hover:bg-neutral-900 hover:-translate-y-0.5 transition-transform border-l-4 border-l-amber-500"
                         >
                             <div className="text-xs text-neutral-400">Waiting</div>
@@ -227,7 +258,7 @@ export default async function DashboardPage() {
                         </Link>
 
                         <Link
-                            href="/requests?status=Completed"
+                            href="/requests?status=Completed&sort=request&dir=desc"
                             className="block transform rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 hover:bg-neutral-900 hover:-translate-y-0.5 transition-transform border-l-4 border-l-emerald-500"
                         >
                             <div className="text-xs text-neutral-400">Completed</div>
@@ -264,7 +295,7 @@ export default async function DashboardPage() {
                             <section className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-4 border-l-4 border-l-neutral-500">
                                 <div className="flex items-center justify-between">
                                     <h3 className="text-sm font-semibold text-neutral-100">Not Started</h3>
-                                    <Link href="/requests" className="text-xs text-neutral-400 underline hover:text-neutral-200">
+                                    <Link href="/requests?sort=request&dir=desc" className="text-xs text-neutral-400 underline hover:text-neutral-200">
                                         View all
                                     </Link>
                                 </div>
@@ -294,7 +325,7 @@ export default async function DashboardPage() {
                                 <div className="flex items-center justify-between">
                                     <h3 className="text-sm font-semibold text-neutral-100">In Progress</h3>
                                     <Link
-                                        href="/requests?status=In%20Progress"
+                                        href="/requests?status=In%20Progress&sort=request&dir=desc"
                                         className="text-xs text-neutral-400 underline hover:text-neutral-200"
                                     >
                                         View all
@@ -359,7 +390,7 @@ export default async function DashboardPage() {
                 {lateJobsCount > 0 ? (
                     <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         <Link
-                            href="/requests?late=1"
+                            href="/requests?late=1&sort=request&dir=desc"
                             className="block transform rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 hover:bg-neutral-900 hover:-translate-y-0.5 transition-transform border-l-4 border-l-red-500"
                         >
                             <div className="text-xs text-neutral-400">Late Jobs</div>

@@ -1,5 +1,6 @@
 import AppShell from "@/app/components/AppShell";
 import { createClient } from "@/app/lib/supabase/server";
+import { ensureLeadTimeSettings } from "@/app/lib/lead-times";
 import { createMaterialAndRedirect } from "@/app/actions";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -40,6 +41,8 @@ export default async function CostsPage({
 
     if (!user) redirect("/login");
     const sp = await searchParams;
+
+    await ensureLeadTimeSettings(supabase);
 
     const [{ data: materials, error: materialsError }, { data: settings, error: settingsError }] =
         await Promise.all([

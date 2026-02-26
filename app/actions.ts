@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "./lib/supabase/server";
+import { recalculateLeadTimesForOpenRequests } from "./lib/lead-times";
 import { redirect } from "next/navigation";
 
 
@@ -242,11 +243,19 @@ export async function updateServiceStepStatus(
 
   const { data: existingRow, error: existingRowError } = await supabase
     .from("request_services")
-    .select("notes, started_at, paused_at, completed_at")
+    .select("step_status, notes, started_at, paused_at, completed_at")
     .eq("id", serviceId)
     .single();
 
   if (existingRowError) throw new Error(JSON.stringify(existingRowError));
+
+  const { data: existingActuals, error: existingActualsError } = await supabase
+    .from("service_actuals")
+    .select("actual_hours, data")
+    .eq("service_id", serviceId)
+    .maybeSingle();
+
+  if (existingActualsError) throw new Error(JSON.stringify(existingActualsError));
 
   updatePayload.notes = existingRow?.notes ?? "";
 
@@ -264,14 +273,67 @@ export async function updateServiceStepStatus(
   //               clear paused_at and completed_at
   // - Waiting (Paused): set paused_at to now (leave started_at as-is)
   // - Completed: set completed_at to now, clear paused_at
+  const nowIso = new Date().toISOString();
+
+  const existingData = (existingActuals?.data as any) ?? {};
+  const existingTiming = existingData?.timing ?? {};
+  let totalPausedMs = Number(existingTiming?.total_paused_ms ?? 0);
+  if (!Number.isFinite(totalPausedMs) || totalPausedMs < 0) totalPausedMs = 0;
+  let priorCompletedMs = Number(existingTiming?.prior_completed_ms ?? 0);
+  if (!Number.isFinite(priorCompletedMs) || priorCompletedMs < 0) priorCompletedMs = 0;
+
+  const isRestartFromCompleted =
+    step_status === "In Progress" && existingRow?.step_status === "Completed";
+
+  if (isRestartFromCompleted) {
+    const prevStartedMs = existingRow?.started_at
+      ? Date.parse(existingRow.started_at)
+      : NaN;
+    const prevCompletedMs = existingRow?.completed_at
+      ? Date.parse(existingRow.completed_at)
+      : NaN;
+
+    if (Number.isFinite(prevStartedMs) && Number.isFinite(prevCompletedMs)) {
+      const prevElapsedMs = Math.max(0, prevCompletedMs - prevStartedMs);
+      const prevActiveMs = Math.max(0, prevElapsedMs - totalPausedMs);
+      priorCompletedMs += prevActiveMs;
+    }
+
+    totalPausedMs = 0;
+  }
+
+  const pausedAtMs = existingRow?.paused_at ? Date.parse(existingRow.paused_at) : NaN;
+  const nowMs = Date.parse(nowIso);
+
+  const shouldClosePauseWindow =
+    Number.isFinite(pausedAtMs) &&
+    Number.isFinite(nowMs) &&
+    (step_status === "In Progress" || step_status === "Completed");
+
+  if (shouldClosePauseWindow) {
+    totalPausedMs += Math.max(0, nowMs - pausedAtMs);
+  }
+
+  const mergedData = {
+    ...existingData,
+    timing: {
+      ...existingTiming,
+      total_paused_ms: Math.round(totalPausedMs),
+      prior_completed_ms: Math.round(priorCompletedMs),
+      updated_at: nowIso,
+    },
+  };
+
   if (step_status === "In Progress") {
-    updatePayload.started_at = existingRow?.started_at ?? new Date().toISOString();
+    updatePayload.started_at = isRestartFromCompleted
+      ? nowIso
+      : existingRow?.started_at ?? nowIso;
     updatePayload.paused_at = null;
     updatePayload.completed_at = null;
   } else if (step_status === "Waiting") {
-    updatePayload.paused_at = new Date().toISOString();
+    updatePayload.paused_at = nowIso;
   } else if (step_status === "Completed") {
-    updatePayload.completed_at = new Date().toISOString();
+    updatePayload.completed_at = nowIso;
     updatePayload.paused_at = null;
   }
 
@@ -281,6 +343,17 @@ export async function updateServiceStepStatus(
     .eq("id", serviceId);
 
   if (stepError) throw new Error(JSON.stringify(stepError));
+
+  const { error: actualsUpsertError } = await supabase.from("service_actuals").upsert(
+    {
+      service_id: serviceId,
+      actual_hours: existingActuals?.actual_hours ?? null,
+      data: mergedData,
+    },
+    { onConflict: "service_id" }
+  );
+
+  if (actualsUpsertError) throw new Error(JSON.stringify(actualsUpsertError));
 
   // 4) Sync request overall_status based on current step states
   {
@@ -312,6 +385,8 @@ export async function updateServiceStepStatus(
       if (reqError) throw new Error(JSON.stringify(reqError));
     }
   }
+
+  await recalculateLeadTimesForOpenRequests(supabase);
 
   // 5) Refresh pages that display request/service data
   revalidatePath("/requests");

@@ -18,7 +18,7 @@ export default async function SettingsPage() {
                 <div>
                     <h1 className="text-2xl font-semibold">Settings</h1>
                     <p className="mt-1 text-sm text-neutral-400">
-                        Internal configuration for quoting and materials.
+                        Internal configuration for quoting, lead-time scheduling, and materials.
                     </p>
                 </div>
 
@@ -32,7 +32,7 @@ export default async function SettingsPage() {
                             Manage materials & rates
                         </Link>
                         <div className="text-xs text-neutral-500">
-                            Materials (price/lb) and cost settings used by the Quote Tool.
+                            Materials (price/lb), quote rates, and lead-time scheduling settings.
                         </div>
                     </div>
                 </div>

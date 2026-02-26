@@ -7,6 +7,7 @@ import Link from "next/link";
 
 type RequestRow = {
     id: string;
+    request_number: number | null;
     created_at: string;
     customer_name: string | null;
     services_requested: string[] | null;
@@ -18,7 +19,7 @@ type RequestRow = {
 export default async function RequestsPage({
     searchParams,
 }: {
-    searchParams?: Promise<{ status?: string; late?: string; q?: string }>;
+    searchParams?: Promise<{ status?: string; late?: string; q?: string; sort?: string; dir?: string }>;
 }) {
     const supabase = await createClient();
 
@@ -30,22 +31,55 @@ export default async function RequestsPage({
         redirect("/login");
     }
     const sp = await searchParams;
-    const { status: rawStatus, late, q: rawQ } = sp ?? {};
+    const { status: rawStatus, late, q: rawQ, sort: rawSort, dir: rawDir } = sp ?? {};
     const q = (rawQ ?? "").trim();
 
     const normalizedStatus = (rawStatus ?? "").trim().replace(/:$/, "");
     const allowedStatuses = new Set(["In Progress", "Completed"]);
     const status = allowedStatuses.has(normalizedStatus) ? normalizedStatus : undefined;
 
+    const allowedSorts = new Set(["request", "customer", "created"]);
+    const requestedSort = String(rawSort ?? "").toLowerCase();
+    const defaultSort = "request";
+    const sort = allowedSorts.has(requestedSort) ? requestedSort : defaultSort;
+
+    const requestedDir = String(rawDir ?? "").toLowerCase();
+    const defaultDir = "desc";
+    const dir = requestedDir === "asc" || requestedDir === "desc" ? requestedDir : defaultDir;
+    const ascending = dir === "asc";
+
+    const nextDir = (col: string) => {
+        if (sort === col) return ascending ? "desc" : "asc";
+        return "desc";
+    };
+
+    const sortHref = (col: string) => {
+        const params = new URLSearchParams();
+        if (status) params.set("status", status);
+        if (late) params.set("late", late);
+        if (q) params.set("q", q);
+        params.set("sort", col);
+        params.set("dir", nextDir(col));
+        return `/requests?${params.toString()}`;
+    };
+
+    const sortIndicator = (col: string) => {
+        if (sort !== col) return "";
+        return ascending ? " ▲" : " ▼";
+    };
+
     let query = supabase
         .from("requests")
         .select(`
   id,
+    request_number,
   created_at,
   customer_name,
   services_requested,
   overall_status,
+    job_deadline,
   request_services (
+        id,
     service_type,
     step_status,
     sort_order,
@@ -55,7 +89,7 @@ export default async function RequestsPage({
     updated_at
   )
 `)
-        .limit(10);
+                .order("created_at", { ascending: false });
 
     if (status === "In Progress") {
         // Treat paused requests (overall_status = Waiting) as part of the In Progress queue
@@ -77,65 +111,80 @@ export default async function RequestsPage({
 
 
     if (late) {
-        const nowIso = new Date().toISOString();
-        query = query
-            .not("job_deadline", "is", null)
-            .lt("job_deadline", nowIso)
-            .neq("overall_status", "Completed");
+        query = query.neq("overall_status", "Completed");
     }
 
     const { data: rawData, error } = await query.returns<RequestRow[]>();
 
     let data = rawData ?? [];
 
-    // Only apply the smart queue sort on the In Progress view
-    if (status === "In Progress") {
-        data = data.slice().sort((a: any, b: any) => {
-            const aSteps = Array.isArray(a.request_services)
-                ? (a.request_services as any[]).slice().sort((x, y) => (x.sort_order ?? 0) - (y.sort_order ?? 0))
-                : [];
-            const bSteps = Array.isArray(b.request_services)
-                ? (b.request_services as any[]).slice().sort((x, y) => (x.sort_order ?? 0) - (y.sort_order ?? 0))
-                : [];
+    const stepIds = data.flatMap((req: any) =>
+        Array.isArray(req.request_services)
+            ? (req.request_services as any[]).map((s: any) => String(s.id ?? "")).filter(Boolean)
+            : []
+    );
 
-            const aActive = aSteps.some((s) => s.step_status === "In Progress");
-            const bActive = bSteps.some((s) => s.step_status === "In Progress");
+    const { data: actualRows } = stepIds.length
+        ? await supabase
+            .from("service_actuals")
+            .select("service_id, data")
+            .in("service_id", stepIds)
+        : { data: [] as any[] };
 
-            if (aActive !== bActive) return aActive ? -1 : 1;
+    const leadByServiceId = new Map<string, any>(
+        (actualRows ?? []).map((r: any) => [String(r.service_id), (r?.data as any)?.lead_time ?? null])
+    );
 
-            const aPaused = aSteps.some((s) => s.step_status === "Waiting");
-            const bPaused = bSteps.some((s) => s.step_status === "Waiting");
+    const nowMs = Date.now();
+    const lateServicesByRequestId = new Map<string, string[]>();
 
-            if (aPaused !== bPaused) return aPaused ? -1 : 1;
+    for (const req of data as any[]) {
+        const steps = Array.isArray(req.request_services) ? (req.request_services as any[]) : [];
+        const lateServices = steps
+            .filter((s) => String(s.step_status ?? "") !== "Completed")
+            .filter((s) => {
+                const lead = leadByServiceId.get(String(s.id ?? ""));
+                const dueMs = lead?.due_at ? Date.parse(String(lead.due_at)) : NaN;
+                return Number.isFinite(dueMs) && dueMs < nowMs;
+            })
+            .map((s) => String(s.service_type ?? ""));
 
-            const aLast = Math.max(
-                Date.parse(a.created_at ?? "") || 0,
-                ...aSteps.map((s) =>
-                    Math.max(
-                        Date.parse(s.updated_at ?? "") || 0,
-                        Date.parse(s.started_at ?? "") || 0,
-                        Date.parse(s.paused_at ?? "") || 0,
-                        Date.parse(s.completed_at ?? "") || 0
-                    )
-                )
-            );
-
-            const bLast = Math.max(
-                Date.parse(b.created_at ?? "") || 0,
-                ...bSteps.map((s) =>
-                    Math.max(
-                        Date.parse(s.updated_at ?? "") || 0,
-                        Date.parse(s.started_at ?? "") || 0,
-                        Date.parse(s.paused_at ?? "") || 0,
-                        Date.parse(s.completed_at ?? "") || 0
-                    )
-                )
-            );
-
-            // Most recent activity first
-            return bLast - aLast;
-        });
+        if (lateServices.length > 0) {
+            lateServicesByRequestId.set(String(req.id), lateServices);
+        }
     }
+
+    if (late) {
+        data = data.filter((req: any) => lateServicesByRequestId.has(String(req.id)));
+    }
+
+    data = data.slice().sort((a: any, b: any) => {
+        if (sort === "request") {
+            const aNum = Number.isFinite(Number(a.request_number)) ? Number(a.request_number) : null;
+            const bNum = Number.isFinite(Number(b.request_number)) ? Number(b.request_number) : null;
+
+            if (aNum == null && bNum == null) return 0;
+            if (aNum == null) return 1;
+            if (bNum == null) return -1;
+
+            return ascending ? aNum - bNum : bNum - aNum;
+        }
+
+        if (sort === "customer") {
+            const aName = String(a.customer_name ?? "");
+            const bName = String(b.customer_name ?? "");
+            return ascending ? aName.localeCompare(bName) : bName.localeCompare(aName);
+        }
+
+        if (sort === "created") {
+            const aTs = Date.parse(a.created_at ?? "") || 0;
+            const bTs = Date.parse(b.created_at ?? "") || 0;
+            return ascending ? aTs - bTs : bTs - aTs;
+        }
+
+        return 0;
+    });
+
     const listTitle = late ? "Late Jobs" : status ?? "Requests";
 
     return (
@@ -150,6 +199,8 @@ export default async function RequestsPage({
                         {/* Preserve existing filters */}
                         {status ? <input type="hidden" name="status" value={status} /> : null}
                         {late ? <input type="hidden" name="late" value={late} /> : null}
+                        {sort ? <input type="hidden" name="sort" value={sort} /> : null}
+                        {dir ? <input type="hidden" name="dir" value={dir} /> : null}
 
                         <input
                             type="text"
@@ -169,11 +220,15 @@ export default async function RequestsPage({
                         {q.length > 0 ? (
                             <Link
                                 href={
-                                    status
-                                        ? `/requests?status=${encodeURIComponent(status)}`
-                                        : late
-                                            ? `/requests?late=1`
-                                            : `/requests`
+                                    (() => {
+                                        const params = new URLSearchParams();
+                                        if (status) params.set("status", status);
+                                        if (late) params.set("late", late);
+                                        if (sort) params.set("sort", sort);
+                                        if (dir) params.set("dir", dir);
+                                        const suffix = params.toString();
+                                        return suffix ? `/requests?${suffix}` : "/requests";
+                                    })()
                                 }
                                 className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-800 bg-transparent px-4 text-sm font-medium text-neutral-200 hover:bg-neutral-900/60"
                             >
@@ -181,7 +236,6 @@ export default async function RequestsPage({
                             </Link>
                         ) : null}
                     </form>
-
 
                     <div className="mt-4 border-b border-neutral-800" />
                 </div>
@@ -191,138 +245,128 @@ export default async function RequestsPage({
                     </p>
                 )}
 
-                {data && data.length === 0 && (
-                    <ul className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950">
-                        <li className="p-6 text-sm text-neutral-400 text-center">
-                            {late
-                                ? "No late jobs right now."
-                                : status
-                                    ? `No ${status.toLowerCase()} requests right now.`
-                                    : "No requests yet."}
-                        </li>
-                    </ul>
-                )}
+                <div className="overflow-x-auto rounded-xl border border-neutral-700">
+                    <table className="w-full table-fixed text-sm">
+                        <thead className="bg-neutral-950/60 text-left text-neutral-300">
+                            <tr className="border-b border-neutral-700">
+                                <th className="w-[13%] px-3 py-2">
+                                    <Link href={sortHref("request")} className="hover:text-white">
+                                        Request ID{sortIndicator("request")}
+                                    </Link>
+                                </th>
+                                <th className="w-[20%] px-3 py-2">
+                                    <Link href={sortHref("customer")} className="hover:text-white">
+                                        Customer{sortIndicator("customer")}
+                                    </Link>
+                                </th>
+                                <th className="w-[18%] px-3 py-2">Status</th>
+                                <th className="w-[27%] px-3 py-2">Services</th>
+                                <th className="w-[12%] px-3 py-2">
+                                    <Link href={sortHref("created")} className="hover:text-white">
+                                        Created{sortIndicator("created")}
+                                    </Link>
+                                </th>
+                                <th className="w-[10%] px-3 py-2 text-right">View</th>
+                            </tr>
+                        </thead>
 
-                {data && data.length > 0 && (
-                    <ul className="divide-y divide-neutral-800"
-                    >
-                        {data.map((req: RequestRow) => (
-                            <li
-                                key={req.id}
-                                className="group relative p-4 rounded-lg border border-neutral-800 bg-neutral-950/40 transition-colors hover:bg-neutral-900/60 active:bg-neutral-900 focus-within:outline focus-within:outline-2 focus-within:outline-blue-500 focus-within:z-10"
-                            >
-                                <Link
-                                    href={`/requests/${req.id}`}
-                                    className="block w-full text-left cursor-pointer focus:outline-none"
-                                >
+                        <tbody className="divide-y divide-neutral-700 bg-neutral-950/30">
+                            {data.length === 0 ? (
+                                <tr>
+                                    <td className="px-3 py-4 text-neutral-400" colSpan={6}>
+                                        {late
+                                            ? "No late jobs right now."
+                                            : status
+                                                ? `No ${status.toLowerCase()} requests right now.`
+                                                : "No requests yet."}
+                                    </td>
+                                </tr>
+                            ) : (
+                                data.map((req: RequestRow) => {
+                                    const steps = Array.isArray((req as any).request_services)
+                                        ? ((req as any).request_services as any[])
+                                            .slice()
+                                            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+                                        : [];
 
+                                    const active = steps.find((s) => s.step_status === "In Progress");
+                                    const paused = steps.find((s) => s.step_status === "Waiting");
+                                    const next = steps.find((s) => s.step_status === "Not Started");
+                                    const lateServices = lateServicesByRequestId.get(String(req.id)) ?? [];
 
-                                    <div className="flex items-center justify-between gap-4">
-                                        <div className="min-w-0">
-                                            <p
-                                                className="font-medium text-neutral-100 truncate"
-                                                title={req.customer_name || "Unnamed customer"}
-                                            >
-                                                {req.customer_name || "Unnamed customer"}
-                                            </p>
+                                    const statusLabel = (() => {
+                                        if (lateServices.length > 0) {
+                                            const preview = lateServices.slice(0, 2).join(", ");
+                                            const more = lateServices.length > 2 ? ` +${lateServices.length - 2}` : "";
+                                            return `Late: ${preview}${more}`;
+                                        }
+                                        if (active) return `${active.service_type} In Progress`;
+                                        if (paused) return `${paused.service_type} Paused`;
+                                        if ((req.overall_status === "In Progress" || req.overall_status === "Waiting") && next) {
+                                            return `Waiting to Start ${next.service_type}`;
+                                        }
+                                        return req.overall_status;
+                                    })();
 
+                                    const statusClass = lateServices.length > 0
+                                        ? "rounded-full border border-red-700/60 bg-red-950/30 px-2 py-0.5 text-[11px] text-red-200"
+                                        : paused
+                                            ? "rounded-full border border-amber-700/60 bg-amber-950/30 px-2 py-0.5 text-[11px] text-amber-200"
+                                            : "rounded-full border border-neutral-700 bg-neutral-950/40 px-2 py-0.5 text-[11px] text-neutral-300";
 
-                                            <p
-                                                className="text-sm text-neutral-400 truncate"
-                                                title={(req.services_requested ?? []).join(", ") || "—"}
-                                            >
-                                                {(req.services_requested ?? []).join(", ") || "—"}
-                                            </p>
+                                    return (
+                                        <tr key={req.id} className="align-top">
+                                            <td className="px-3 py-2 text-neutral-200">
+                                                {req.request_number != null ? String(req.request_number).padStart(5, "0") : "—"}
+                                            </td>
 
-                                            <p className="mt-1 text-xs text-neutral-500">
-                                                {new Date(req.created_at).toLocaleString(undefined, {
-                                                    dateStyle: "medium",
-                                                    timeStyle: "short",
-                                                })}
-                                            </p>
+                                            <td className="px-3 py-2 text-neutral-200">
+                                                <div className="truncate">{req.customer_name || "Unnamed customer"}</div>
+                                            </td>
 
-                                            {req.job_deadline && (
-                                                <p className="mt-1 text-xs text-neutral-500">
-                                                    Due{" "}
-                                                    {new Date(req.job_deadline).toLocaleString(undefined, {
-                                                        dateStyle: "medium",
-                                                        timeStyle: "short",
-                                                    })}
-                                                </p>
-                                            )}
+                                            <td className="px-3 py-2">
+                                                <span className={`inline-flex max-w-full items-center truncate ${statusClass}`} title={statusLabel}>
+                                                    {statusLabel}
+                                                </span>
+                                            </td>
 
+                                            <td className="px-3 py-2">
+                                                <div className="grid grid-cols-2 gap-1">
+                                                    {(req.services_requested ?? []).length > 0 ? (
+                                                        (req.services_requested ?? []).map((service, index) => (
+                                                            <span
+                                                                key={`${req.id}-${service}-${index}`}
+                                                                title={service}
+                                                                className="min-w-0 truncate rounded-md border border-neutral-700 bg-neutral-950/40 px-2 py-1 text-xs text-neutral-300"
+                                                            >
+                                                                {service}
+                                                            </span>
+                                                        ))
+                                                    ) : (
+                                                        <span className="text-xs text-neutral-500">—</span>
+                                                    )}
+                                                </div>
+                                            </td>
 
-                                        </div>
+                                            <td className="px-3 py-2 text-neutral-200">
+                                                {new Date(req.created_at).toLocaleDateString()}
+                                            </td>
 
-
-                                        <div className="flex items-center gap-3">
-                                            <span
-                                                title={(() => {
-                                                    const steps = Array.isArray((req as any).request_services)
-                                                        ? ((req as any).request_services as any[])
-                                                        : [];
-
-                                                    const paused = steps.find((s) => s.step_status === "Waiting");
-
-                                                    if (paused?.paused_at) {
-                                                        const dt = new Date(paused.paused_at);
-                                                        const date = dt.toLocaleDateString(undefined, {
-                                                            month: "short",
-                                                            day: "numeric",
-                                                            year: "numeric",
-                                                        });
-                                                        const time = dt.toLocaleTimeString(undefined, {
-                                                            hour: "numeric",
-                                                            minute: "2-digit",
-                                                        });
-
-                                                        return `Paused ${date} at ${time}`;
-                                                    }
-
-                                                    return `Status: ${req.overall_status}`;
-                                                })()}
-                                                className={(() => {
-                                                    const steps = Array.isArray((req as any).request_services)
-                                                        ? ((req as any).request_services as any[])
-                                                        : [];
-                                                    const hasPaused = steps.some((s) => s.step_status === "Waiting");
-
-                                                    return hasPaused
-                                                        ? "inline-flex shrink-0 items-center justify-center text-xs leading-none rounded-full px-2 py-1 border border-amber-700/60 bg-amber-950/30 text-amber-200"
-                                                        : "inline-flex shrink-0 items-center justify-center text-xs leading-none rounded-full px-2 py-1 border bg-neutral-800 text-neutral-300 border-neutral-700";
-                                                })()}
-                                            >
-                                                {(() => {
-                                                    const steps = Array.isArray((req as any).request_services)
-                                                        ? ((req as any).request_services as any[])
-                                                            .slice()
-                                                            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-                                                        : [];
-
-                                                    const active = steps.find((s) => s.step_status === "In Progress");
-                                                    const paused = steps.find((s) => s.step_status === "Waiting");
-                                                    const next = steps.find((s) => s.step_status === "Not Started");
-
-                                                    if (active) return `${active.service_type} In Progress`;
-                                                    if (paused) return `${paused.service_type} Paused`;
-                                                    if ((req.overall_status === "In Progress" || req.overall_status === "Waiting") && next)
-                                                        return `Waiting to Start ${next.service_type}`;
-
-                                                    return req.overall_status;
-                                                })()}
-                                            </span>
-
-                                            <span className="text-neutral-600 text-sm opacity-0 transition-all group-hover:opacity-100 group-hover:translate-x-0.5 group-focus-within:opacity-100 group-focus-within:translate-x-0.5">
-                                                ›
-                                            </span>
-                                        </div>
-
-                                    </div>
-                                </Link>
-                            </li>
-                        ))}
-                    </ul>
-                )}
+                                            <td className="px-3 py-2 text-right">
+                                                <Link
+                                                    href={`/requests/${req.id}`}
+                                                    className="inline-flex h-9 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950 px-3 text-xs text-neutral-200 hover:bg-neutral-900"
+                                                >
+                                                    View
+                                                </Link>
+                                            </td>
+                                        </tr>
+                                    );
+                                })
+                            )}
+                        </tbody>
+                    </table>
+                </div>
 
             </div>
         </AppShell>
