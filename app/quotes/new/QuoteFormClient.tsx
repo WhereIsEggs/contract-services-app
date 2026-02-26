@@ -59,6 +59,12 @@ export default function QuoteFormClient({
 
     const router = useRouter();
 
+    const [jobName, setJobName] = useState(initialJobName ?? "");
+
+    useEffect(() => {
+        setJobName(initialJobName ?? "");
+    }, [initialJobName]);
+
     const [materialsState, setMaterialsState] = useState<MaterialOption[]>(() => materials);
 
     useEffect(() => {
@@ -369,15 +375,12 @@ export default function QuoteFormClient({
                     <label className="grid gap-1">
                         <span className="text-xs text-neutral-400">Request ID:</span>
 
-                        {fromRequest ? (
-                            <input type="hidden" name="job_name" value={initialJobName ?? ""} />
-                        ) : null}
-
                         <input
                             name="job_name"
                             required
-                            defaultValue={initialJobName ?? ""}
-                            disabled={Boolean(fromRequest)}
+                            value={jobName}
+                            onChange={(e) => setJobName(e.target.value)}
+                            readOnly={Boolean(fromRequest)}
                             className={`w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 ${fromRequest ? "opacity-80 cursor-not-allowed" : ""}`}
                         />
                     </label>
@@ -422,51 +425,171 @@ export default function QuoteFormClient({
                     </div>
                 </div>
 
-                {anySvcSelected && (
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
-                        <div className="mb-2 text-sm font-medium text-neutral-200">Preview</div>
+                {svc.contract_printing && (
+                    <div className="grid gap-3">
+                        {/* Times */}
+                        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                            {/* Print time */}
+                            <label className="grid min-w-0 gap-1 rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
+                                <span className="text-xs text-neutral-400">Print time (hours)</span>
+                                <input
+                                    name="print_time_hours"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    defaultValue="0"
+                                    onChange={(e) => setPrintTimeHours(toNum(e.target.value))}
+                                    onBlur={(e) => coerceBlankNumberToZero(e, setPrintTimeHours)}
+                                    className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                            </label>
 
-                        {/* Totals */}
-                        <div className="mt-3 grid gap-2 md:grid-cols-2">
-                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                <div className="text-sm text-neutral-300">Total price (no discount)</div>
-                                <div className="mt-1 text-lg font-semibold text-white">
-                                    {money(preview.X_totalNoDiscount_all)}
+                            {/* Support removal */}
+                            <label className="grid min-w-0 gap-1 rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
+                                <span className="text-xs text-neutral-400">Support removal (hours)</span>
+                                <input
+                                    name="support_removal_time_hours"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    defaultValue="0"
+                                    onChange={(e) => setSupportRemovalTimeHrs(toNum(e.target.value))}
+                                    onBlur={(e) => coerceBlankNumberToZero(e, setSupportRemovalTimeHrs)}
+                                    className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                            </label>
+
+                            {/* Setup */}
+                            <label className="grid min-w-0 gap-1 rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
+                                <span className="text-xs text-neutral-400">Setup time (hours)</span>
+                                <input
+                                    name="setup_time_hours"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    defaultValue="0"
+                                    onChange={(e) => setSetupTimeHrs(toNum(e.target.value))}
+                                    onBlur={(e) => coerceBlankNumberToZero(e, setSetupTimeHrs)}
+                                    className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                            </label>
+
+                            {/* Admin */}
+                            <label className="grid min-w-0 gap-1 rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
+                                <span className="text-xs text-neutral-400">Admin time (hours)</span>
+                                <input
+                                    name="admin_time_hours"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    defaultValue="0"
+                                    onChange={(e) => setAdminTimeHrs(toNum(e.target.value))}
+                                    onBlur={(e) => coerceBlankNumberToZero(e, setAdminTimeHrs)}
+                                    className="h-10 w-full min-w-0 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                            </label>
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
+                                <div className="mb-2 text-sm font-medium text-neutral-200">Material 1</div>
+                                <div className="grid gap-2">
+                                    <label className="grid gap-1">
+                                        <span className="text-xs text-neutral-400">Material</span>
+                                        <select
+                                            name="material1_id"
+                                            value={material1Id}
+                                            onChange={(e) => {
+                                                const value = e.target.value;
+                                                if (value === ADD_NEW_VALUE) {
+                                                    openAddMaterialModal("material1");
+                                                    return;
+                                                }
+                                                setMaterial1Id(value);
+                                            }}
+                                            className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        >
+                                            <option value="">Select material</option>
+                                            {sortMaterials(
+                                                materialsState.filter(
+                                                    (m) => m.is_active || m.id === material1Id || m.id === material2Id
+                                                )
+                                            ).map((m) => (
+                                                <option key={m.id} value={m.id}>
+                                                    {m.category ? `${m.category} - ${m.name}` : m.name}
+                                                </option>
+                                            ))}
+                                            <option value={ADD_NEW_VALUE}>+ Add new material…</option>
+                                        </select>
+                                    </label>
+
+                                    <label className="grid gap-1">
+                                        <span className="text-xs text-neutral-400">Usage (grams)</span>
+                                        <input
+                                            name="material1_grams"
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            defaultValue="0"
+                                            onChange={(e) => setMaterial1Grams(toNum(e.target.value))}
+                                            onBlur={(e) => coerceBlankNumberToZero(e, setMaterial1Grams)}
+                                            className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                    </label>
                                 </div>
                             </div>
 
-                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                <div className="text-sm text-neutral-300">Total internal cost</div>
-                                <div className="mt-1 text-lg font-semibold text-white">
-                                    {money(preview.internalCostAll)}
-                                </div>
-                            </div>
+                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/30 p-3">
+                                <div className="mb-2 text-sm font-medium text-neutral-200">Material 2</div>
+                                <div className="grid gap-2">
+                                    <label className="grid gap-1">
+                                        <span className="text-xs text-neutral-400">Material</span>
+                                        <select
+                                            name="material2_id"
+                                            value={material2Id}
+                                            onChange={(e) => {
+                                                const value = e.target.value;
+                                                if (value === ADD_NEW_VALUE) {
+                                                    openAddMaterialModal("material2");
+                                                    return;
+                                                }
+                                                setMaterial2Id(value);
+                                            }}
+                                            className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        >
+                                            <option value="">Select material</option>
+                                            {sortMaterials(
+                                                materialsState.filter(
+                                                    (m) => m.is_active || m.id === material1Id || m.id === material2Id
+                                                )
+                                            ).map((m) => (
+                                                <option key={m.id} value={m.id}>
+                                                    {m.category ? `${m.category} - ${m.name}` : m.name}
+                                                </option>
+                                            ))}
+                                            <option value={ADD_NEW_VALUE}>+ Add new material…</option>
+                                        </select>
+                                    </label>
 
-                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                <div className="text-sm text-neutral-300">Profit</div>
-                                <div className="mt-1 text-lg font-semibold text-white">
-                                    {money(preview.profit)}
-                                </div>
-                            </div>
-
-                            <div className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
-                                <div className="text-sm text-neutral-300">Discounted / Expedited</div>
-                                <div className="mt-1 text-sm text-neutral-200">
-                                    Discount ({(preview.discountRate * 100).toFixed(0)}%):{" "}
-                                    <span className="font-semibold text-white">{money(preview.discounted)}</span>
-                                </div>
-                                <div className="text-sm text-neutral-200">
-                                    Expedited ({(preview.expeditedUpcharge * 100).toFixed(0)}%):{" "}
-                                    <span className="font-semibold text-white">{money(preview.expedited)}</span>
+                                    <label className="grid gap-1">
+                                        <span className="text-xs text-neutral-400">Usage (grams)</span>
+                                        <input
+                                            name="material2_grams"
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            defaultValue="0"
+                                            onChange={(e) => setMaterial2Grams(toNum(e.target.value))}
+                                            onBlur={(e) => coerceBlankNumberToZero(e, setMaterial2Grams)}
+                                            className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                    </label>
                                 </div>
                             </div>
                         </div>
-
-                        <p className="mt-3 text-xs text-neutral-500">
-                            This preview is live and does not affect saved values until you click “Save Quote”.
-                        </p>
                     </div>
                 )}
+
                 {otherSelectedCount > 0 && (
                     <div className={`grid gap-3 ${otherGridColsClass}`}>
                         {svc.scanning && (
@@ -480,7 +603,7 @@ export default function QuoteFormClient({
                                     defaultValue="0"
                                     onChange={(e) => setScanLaborHours(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setScanLaborHours)}
-                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                             </label>
                         )}
@@ -496,7 +619,7 @@ export default function QuoteFormClient({
                                     defaultValue="0"
                                     onChange={(e) => setDesignLaborHours(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setDesignLaborHours)}
-                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                             </label>
                         )}
@@ -512,7 +635,7 @@ export default function QuoteFormClient({
                                     defaultValue="0"
                                     onChange={(e) => setTestLaborHours(toNum(e.target.value))}
                                     onBlur={(e) => coerceBlankNumberToZero(e, setTestLaborHours)}
-                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                    className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 />
                             </label>
                         )}
@@ -784,7 +907,7 @@ export default function QuoteFormClient({
                                     <input
                                         name="name"
                                         required
-                                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                         placeholder="e.g., ASA Black"
                                     />
                                 </label>
@@ -793,7 +916,7 @@ export default function QuoteFormClient({
                                     <span className="text-xs text-neutral-400">Color</span>
                                     <input
                                         name="category"
-                                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                         placeholder="e.g., Black / White / Clear"
                                     />
                                 </label>
@@ -806,7 +929,7 @@ export default function QuoteFormClient({
                                         step="0.01"
                                         min="0"
                                         required
-                                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                        className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                                         placeholder="e.g., 18.50"
                                     />
                                 </label>

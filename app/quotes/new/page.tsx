@@ -5,7 +5,7 @@ import { createClient } from "@/app/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
-import QuoteFormClient from "./QuoteFormClient";
+import QuoteFormClient from "@/app/quotes/new/QuoteFormClient";
 
 export default async function NewQuotePage({
     searchParams,
