@@ -1,5 +1,6 @@
 import AppShell from "@/app/components/AppShell";
 import { createClient } from "@/app/lib/supabase/server";
+import { createMaterialAndRedirect } from "@/app/actions";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
@@ -109,7 +110,7 @@ export default async function CostsPage({
                         {/* Add Material */}
                         <div className="mb-5 rounded-xl border border-neutral-800 bg-neutral-950/40 p-3">
                             <div className="mb-2 text-sm font-medium text-neutral-200">Add Material</div>
-                            <form action={createMaterial} className="grid gap-3">
+                            <form action={createMaterialAndRedirect} className="grid gap-3">
                                 <div className="grid gap-2 md:grid-cols-2">
                                     <label className="grid gap-1">
                                         <span className="text-xs text-neutral-400">Name</span>
@@ -122,11 +123,11 @@ export default async function CostsPage({
                                     </label>
 
                                     <label className="grid gap-1">
-                                        <span className="text-xs text-neutral-400">Category (optional)</span>
+                                        <span className="text-xs text-neutral-400">Color</span>
                                         <input
                                             name="category"
                                             className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
-                                            placeholder="e.g., ASA / PETG / Resin"
+                                            placeholder="e.g., Black / White / Clear"
                                         />
                                     </label>
                                 </div>
@@ -173,7 +174,7 @@ export default async function CostsPage({
                                 <thead className="bg-neutral-950/60 text-left text-neutral-300">
                                     <tr className="border-b border-neutral-800">
                                         <th className="px-3 py-2">Name</th>
-                                        <th className="px-3 py-2">Category</th>
+                                        <th className="px-3 py-2">Color</th>
                                         <th className="px-3 py-2">$/lb</th>
                                         <th className="px-3 py-2">Active</th>
                                         <th className="px-3 py-2 text-right">Actions</th>
@@ -309,37 +310,6 @@ export default async function CostsPage({
 /* =========================
    Server Actions
 ========================= */
-
-async function createMaterial(formData: FormData) {
-    "use server";
-    const supabase = await createClient();
-
-    try {
-        const name = String(formData.get("name") ?? "").trim();
-        const categoryRaw = String(formData.get("category") ?? "").trim();
-        const priceStr = String(formData.get("price_per_lb") ?? "").trim();
-        const is_active = formData.get("is_active") === "on";
-
-        if (!name) throw new Error("Name is required.");
-        const price_per_lb = Number(priceStr);
-        if (!Number.isFinite(price_per_lb) || price_per_lb < 0) throw new Error("Invalid price per lb.");
-
-        const { error } = await supabase.from("material_costs").insert({
-            name,
-            category: categoryRaw.length ? categoryRaw : null,
-            price_per_lb,
-            is_active,
-        });
-
-        if (error) throw new Error(error.message);
-
-        revalidatePath("/costs");
-        redirect("/costs?msg=Material%20added");
-    } catch (e: any) {
-        if (isRedirectError(e)) throw e;
-        redirect(`/costs?err=${encodeURIComponent(e?.message ?? "Failed to add material")}`);
-    }
-}
 
 async function updateMaterial(formData: FormData) {
     "use server";

@@ -319,4 +319,67 @@ export async function updateServiceStepStatus(
   revalidatePath(`/requests/${svcRow.request_id}`);
 }
 
+// =========================
+// Materials (shared actions)
+// =========================
+
+export type MaterialCostRow = {
+  id: string;
+  name: string;
+  category: string | null;
+  price_per_lb: number;
+  is_active: boolean;
+  updated_at: string | null;
+};
+
+export async function createMaterialReturningRow(formData: FormData): Promise<{
+  ok: boolean;
+  material?: MaterialCostRow;
+  error?: string;
+}> {
+  const supabase = await createClient();
+
+  try {
+    const name = String(formData.get("name") ?? "").trim();
+    const categoryRaw = String(formData.get("category") ?? "").trim();
+    const priceStr = String(formData.get("price_per_lb") ?? "").trim();
+    const is_active = formData.get("is_active") === "on";
+
+    if (!name) throw new Error("Name is required.");
+
+    const price_per_lb = Number(priceStr);
+    if (!Number.isFinite(price_per_lb) || price_per_lb < 0) {
+      throw new Error("Invalid price per lb.");
+    }
+
+    const { data, error } = await supabase
+      .from("material_costs")
+      .insert({
+        name,
+        category: categoryRaw.length ? categoryRaw : null,
+        price_per_lb,
+        is_active,
+      })
+      .select("id,name,category,price_per_lb,is_active,updated_at")
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    return { ok: true, material: data as MaterialCostRow };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? "Failed to add material" };
+  }
+}
+
+export async function createMaterialAndRedirect(formData: FormData) {
+  const result = await createMaterialReturningRow(formData);
+
+  if (!result.ok) {
+    redirect(`/costs?err=${encodeURIComponent(result.error ?? "Failed to add material")}`);
+  }
+
+  revalidatePath("/costs");
+  redirect("/costs?msg=Material%20added");
+}
+
 
