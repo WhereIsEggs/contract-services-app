@@ -19,7 +19,7 @@ type RequestRow = {
 export default async function RequestsPage({
     searchParams,
 }: {
-    searchParams?: Promise<{ status?: string; late?: string; q?: string; sort?: string; dir?: string }>;
+    searchParams?: Promise<{ status?: string; late?: string; q?: string; sort?: string; dir?: string; page?: string }>;
 }) {
     const supabase = await createClient();
 
@@ -31,8 +31,10 @@ export default async function RequestsPage({
         redirect("/login");
     }
     const sp = await searchParams;
-    const { status: rawStatus, late, q: rawQ, sort: rawSort, dir: rawDir } = sp ?? {};
+    const { status: rawStatus, late, q: rawQ, sort: rawSort, dir: rawDir, page: rawPage } = sp ?? {};
     const q = (rawQ ?? "").trim();
+    const page = Math.max(1, Number(rawPage ?? "1") || 1);
+    const pageSize = 25;
 
     const normalizedStatus = (rawStatus ?? "").trim().replace(/:$/, "");
     const allowedStatuses = new Set(["In Progress", "Completed"]);
@@ -60,6 +62,26 @@ export default async function RequestsPage({
         if (q) params.set("q", q);
         params.set("sort", col);
         params.set("dir", nextDir(col));
+        params.set("page", "1");
+        return `/requests?${params.toString()}`;
+    };
+
+    const buildListHref = (overrides?: {
+        page?: number;
+        clearQ?: boolean;
+        sort?: string;
+        dir?: string;
+    }) => {
+        const params = new URLSearchParams();
+        if (status) params.set("status", status);
+        if (late) params.set("late", late);
+        if (!overrides?.clearQ && q) params.set("q", q);
+        params.set("sort", overrides?.sort ?? sort);
+        params.set("dir", overrides?.dir ?? dir);
+
+        const nextPage = Math.max(1, overrides?.page ?? page);
+        params.set("page", String(nextPage));
+
         return `/requests?${params.toString()}`;
     };
 
@@ -112,6 +134,20 @@ export default async function RequestsPage({
 
     if (late) {
         query = query.neq("overall_status", "Completed");
+    } else {
+        const sortColumn =
+            sort === "request"
+                ? "request_number"
+                : sort === "customer"
+                    ? "customer_name"
+                    : "created_at";
+
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize; // fetch one extra row to detect next page
+
+        query = query
+            .order(sortColumn, { ascending })
+            .range(from, to);
     }
 
     const { data: rawData, error } = await query.returns<RequestRow[]>();
@@ -154,11 +190,7 @@ export default async function RequestsPage({
         }
     }
 
-    if (late) {
-        data = data.filter((req: any) => lateServicesByRequestId.has(String(req.id)));
-    }
-
-    data = data.slice().sort((a: any, b: any) => {
+    const sortRows = (rows: any[]) => rows.slice().sort((a: any, b: any) => {
         if (sort === "request") {
             const aNum = Number.isFinite(Number(a.request_number)) ? Number(a.request_number) : null;
             const bNum = Number.isFinite(Number(b.request_number)) ? Number(b.request_number) : null;
@@ -185,6 +217,21 @@ export default async function RequestsPage({
         return 0;
     });
 
+    let hasNext = false;
+
+    if (late) {
+        const filtered = data.filter((req: any) => lateServicesByRequestId.has(String(req.id)));
+        const sorted = sortRows(filtered);
+        const from = (page - 1) * pageSize;
+        const to = from + pageSize;
+        hasNext = to < sorted.length;
+        data = sorted.slice(from, to);
+    } else {
+        const sorted = sortRows(data);
+        hasNext = sorted.length > pageSize;
+        data = sorted.slice(0, pageSize);
+    }
+
     const listTitle = late ? "Late Jobs" : status ?? "Requests";
 
     return (
@@ -210,6 +257,8 @@ export default async function RequestsPage({
                             className="w-full max-w-md h-10 rounded-md border border-neutral-800 bg-neutral-950/40 px-3 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
 
+                        <input type="hidden" name="page" value="1" />
+
                         <button
                             type="submit"
                             className="inline-flex h-10 items-center justify-center rounded-md bg-neutral-800 px-4 text-sm font-medium text-neutral-100 hover:bg-neutral-700"
@@ -219,17 +268,7 @@ export default async function RequestsPage({
 
                         {q.length > 0 ? (
                             <Link
-                                href={
-                                    (() => {
-                                        const params = new URLSearchParams();
-                                        if (status) params.set("status", status);
-                                        if (late) params.set("late", late);
-                                        if (sort) params.set("sort", sort);
-                                        if (dir) params.set("dir", dir);
-                                        const suffix = params.toString();
-                                        return suffix ? `/requests?${suffix}` : "/requests";
-                                    })()
-                                }
+                                href={buildListHref({ page: 1, clearQ: true })}
                                 className="inline-flex h-10 items-center justify-center rounded-md border border-neutral-800 bg-transparent px-4 text-sm font-medium text-neutral-200 hover:bg-neutral-900/60"
                             >
                                 Clear
@@ -366,6 +405,38 @@ export default async function RequestsPage({
                             )}
                         </tbody>
                     </table>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between">
+                    <div className="text-xs text-neutral-500">Page {page}</div>
+
+                    <div className="flex gap-2">
+                        {page > 1 ? (
+                            <Link
+                                href={buildListHref({ page: page - 1 })}
+                                className="inline-flex h-9 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950 px-3 text-xs text-neutral-200 hover:bg-neutral-900"
+                            >
+                                Prev
+                            </Link>
+                        ) : (
+                            <span className="inline-flex h-9 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950 px-3 text-xs text-neutral-500 opacity-60">
+                                Prev
+                            </span>
+                        )}
+
+                        {hasNext ? (
+                            <Link
+                                href={buildListHref({ page: page + 1 })}
+                                className="inline-flex h-9 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950 px-3 text-xs text-neutral-200 hover:bg-neutral-900"
+                            >
+                                Next
+                            </Link>
+                        ) : (
+                            <span className="inline-flex h-9 items-center justify-center rounded-md border border-neutral-700 bg-neutral-950 px-3 text-xs text-neutral-500 opacity-60">
+                                Next
+                            </span>
+                        )}
+                    </div>
                 </div>
 
             </div>
