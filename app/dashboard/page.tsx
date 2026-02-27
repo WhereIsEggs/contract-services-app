@@ -1,4 +1,5 @@
 import AppShell from "@/app/components/AppShell";
+import DashboardCharts from "@/app/components/DashboardCharts";
 import Link from "next/link";
 import { createClient } from "@/app/lib/supabase/server";
 
@@ -224,6 +225,40 @@ export default async function DashboardPage() {
         });
     }).length;
 
+    const completedServicesForCharts = rows.flatMap((r: any) => {
+        const steps = Array.isArray(r.request_services) ? (r.request_services as any[]) : [];
+        return steps
+            .filter((s: any) => String(s.step_status ?? "") === "Completed" && s.completed_at)
+            .map((s: any) => ({
+                completedAt: String(s.completed_at),
+                serviceType: String(s.service_type ?? "Unknown"),
+            }));
+    });
+
+    const requestCreationsForCharts = rows
+        .map((r: any) => String(r.created_at ?? ""))
+        .filter(Boolean);
+
+    const lateOpenByServiceMap = new Map<string, number>();
+    for (const r of rows as any[]) {
+        if (String(r.overall_status ?? "") === "Completed") continue;
+        const steps = Array.isArray(r.request_services) ? (r.request_services as any[]) : [];
+        for (const s of steps) {
+            if (String(s.step_status ?? "") === "Completed") continue;
+            const lead = leadByServiceId.get(String(s.id ?? ""));
+            const dueMs = lead?.due_at ? Date.parse(String(lead.due_at)) : NaN;
+            if (Number.isFinite(dueMs) && dueMs < nowMs) {
+                const key = String(s.service_type ?? "Unknown");
+                lateOpenByServiceMap.set(key, (lateOpenByServiceMap.get(key) ?? 0) + 1);
+            }
+        }
+    }
+
+    const lateOpenByService = Array.from(lateOpenByServiceMap.entries()).map(([serviceType, count]) => ({
+        serviceType,
+        count,
+    }));
+
     return (
         <AppShell title="Dashboard" hideHeaderTitle>
             <div className="grid gap-6">
@@ -237,6 +272,17 @@ export default async function DashboardPage() {
                         Error loading dashboard data.
                     </div>
                 ) : null}
+
+                <DashboardCharts
+                    statusCounts={{
+                        active: counts.Active,
+                        waiting: counts.Waiting,
+                        completed: counts.Completed,
+                    }}
+                    completedServices={completedServicesForCharts}
+                    requestCreations={requestCreationsForCharts}
+                    lateOpenByService={lateOpenByService}
+                />
 
                 {/* Top stats (A: add color accents) */}
                 <section>

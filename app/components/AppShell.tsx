@@ -13,7 +13,7 @@ export default function AppShell({
     title: string;
     children: React.ReactNode;
     hideHeaderTitle?: boolean;
-    activeNav?: "dashboard" | "new_request" | "requests" | "in_progress" | "completed" | "late" | "quote_tool" | "costs";
+    activeNav?: "dashboard" | "new_request" | "requests" | "in_progress" | "completed" | "late" | "quote_tool" | "costs" | "reports";
 }) {
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -22,6 +22,7 @@ export default function AppShell({
     const onNewRequest = pathname === "/requests/new";
     const onQuoteTool = pathname === "/quotes/new";
     const onQuotes = pathname === "/quotes";
+    const onReports = pathname === "/reports";
 
     // Allow pages (like /requests/[id]) to force the sidebar highlight
     const navOverride = activeNav ?? null;
@@ -38,6 +39,7 @@ export default function AppShell({
     const onInProgressFinal = navOverride ? navOverride === "in_progress" : onInProgress;
     const onCompletedFinal = navOverride ? navOverride === "completed" : onCompleted;
     const onLateJobsFinal = navOverride ? navOverride === "late" : onLateJobs;
+    const onReportsFinal = navOverride ? navOverride === "reports" : onReports;
 
     const hasListFilter = searchParams.has("status") || searchParams.has("late");
     const onRequests =
@@ -138,6 +140,16 @@ export default function AppShell({
                                     }`}
                             >
                                 Quotes
+                            </Link>
+
+                            <Link
+                                href="/reports"
+                                className={`block rounded-lg px-3 py-2 text-sm ${onReportsFinal
+                                    ? "bg-neutral-900 text-white"
+                                    : "text-neutral-200 hover:bg-neutral-900 hover:text-white transition"
+                                    }`}
+                            >
+                                Reports
                             </Link>
 
                             <Link
