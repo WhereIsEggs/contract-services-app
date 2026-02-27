@@ -1,6 +1,9 @@
 import { createClient } from "@/app/lib/supabase/server";
 import { quoteKeyForServiceLabel } from "@/app/lib/lead-times";
 import { NextResponse } from "next/server";
+import * as ExcelJS from "exceljs";
+
+export const runtime = "nodejs";
 
 type ReportsSearchParams = {
   period?: string;
@@ -17,7 +20,7 @@ type DateRange = {
   startInput: string;
   endInput: string;
   label: string;
-  period: "quarter" | "semi" | "annual" | "custom";
+  period: "quarter" | "semi_first" | "semi_second" | "annual" | "custom";
   year: number;
   quarter: number;
   half: number;
@@ -33,6 +36,13 @@ function ymd(d: Date) {
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function mdy(d: Date) {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${m}/${day}/${y}`;
 }
 
 function parseYmdUtc(raw: string | undefined) {
@@ -55,13 +65,17 @@ function resolveDateRange(sp?: ReportsSearchParams): DateRange {
 
   const rawPeriod = String(sp?.period ?? "quarter").toLowerCase();
   const period: DateRange["period"] =
-    rawPeriod === "semi" || rawPeriod === "annual" || rawPeriod === "custom"
-      ? (rawPeriod as any)
-      : "quarter";
+    rawPeriod === "semi"
+      ? Number(sp?.half ?? "") === 2
+        ? "semi_second"
+        : "semi_first"
+      : rawPeriod === "semi_first" || rawPeriod === "semi_second" || rawPeriod === "annual" || rawPeriod === "custom"
+        ? (rawPeriod as DateRange["period"])
+        : "quarter";
 
   const year = Math.max(2020, Number(sp?.year ?? String(currentYear)) || currentYear);
   const quarter = Math.min(4, Math.max(1, Number(sp?.quarter ?? String(currentQuarter)) || currentQuarter));
-  const half = Math.min(2, Math.max(1, Number(sp?.half ?? String(currentHalf)) || currentHalf));
+  const half = period === "semi_second" ? 2 : period === "semi_first" ? 1 : Math.min(2, Math.max(1, Number(sp?.half ?? String(currentHalf)) || currentHalf));
 
   if (period === "custom") {
     const parsedStart = parseYmdUtc(sp?.start);
@@ -74,7 +88,7 @@ function resolveDateRange(sp?: ReportsSearchParams): DateRange {
         endIso: endExclusive.toISOString(),
         startInput: ymd(parsedStart),
         endInput: ymd(parsedEnd),
-        label: `${ymd(parsedStart)} to ${ymd(parsedEnd)}`,
+        label: `${mdy(parsedStart)} to ${mdy(parsedEnd)}`,
         period,
         year,
         quarter,
@@ -99,9 +113,10 @@ function resolveDateRange(sp?: ReportsSearchParams): DateRange {
     };
   }
 
-  if (period === "semi") {
-    const startMonth = half === 1 ? 0 : 6;
-    const endMonth = half === 1 ? 6 : 12;
+  if (period === "semi_first" || period === "semi_second") {
+    const isFirstHalf = period === "semi_first";
+    const startMonth = isFirstHalf ? 0 : 6;
+    const endMonth = isFirstHalf ? 6 : 12;
     const start = new Date(Date.UTC(year, startMonth, 1));
     const endExclusive = new Date(Date.UTC(year, endMonth, 1));
     return {
@@ -109,7 +124,7 @@ function resolveDateRange(sp?: ReportsSearchParams): DateRange {
       endIso: endExclusive.toISOString(),
       startInput: ymd(start),
       endInput: ymd(new Date(endExclusive.getTime() - 24 * 60 * 60 * 1000)),
-      label: `H${half} ${year}`,
+      label: isFirstHalf ? `Semi-Annual Jan-Jun ${year}` : `Semi-Annual Jul-Dec ${year}`,
       period,
       year,
       quarter,
@@ -212,6 +227,23 @@ function csvEscape(value: any) {
 
 function line(values: any[]) {
   return `${values.map(csvEscape).join(",")}\n`;
+}
+
+function simpleDate(value: string | undefined | null) {
+  const ms = value ? Date.parse(String(value)) : NaN;
+  if (!Number.isFinite(ms)) return "";
+  const d = new Date(ms);
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const y = d.getFullYear();
+  return `${m}/${day}/${y}`;
+}
+
+function formatInputDate(value: string | undefined | null) {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return raw;
+  return `${match[2]}/${match[3]}/${match[1]}`;
 }
 
 export async function GET(request: Request) {
@@ -344,7 +376,6 @@ export async function GET(request: Request) {
     }
   >();
   const detailedRows: Array<{
-    request_id: string;
     request_number: string;
     customer_name: string;
     service_type: string;
@@ -357,6 +388,8 @@ export async function GET(request: Request) {
     quoted_internal: number;
     actual_internal: number;
     cost_variance: number;
+    profit_loss: number;
+    profit_loss_status: "profit" | "loss" | "break-even";
   }> = [];
 
   for (const step of completedSteps) {
@@ -382,7 +415,6 @@ export async function GET(request: Request) {
     const isLate = Number.isFinite(dueMs) && Number.isFinite(completedMs) && completedMs > dueMs;
 
     detailedRows.push({
-      request_id: String(step.request_id),
       request_number:
         req?.request_number != null && Number.isFinite(Number(req.request_number))
           ? String(Number(req.request_number)).padStart(5, "0")
@@ -398,6 +430,9 @@ export async function GET(request: Request) {
       quoted_internal: quotedCost,
       actual_internal: actualCost,
       cost_variance: actualCost - quotedCost,
+      profit_loss: quotedCost - actualCost,
+      profit_loss_status:
+        quotedCost - actualCost > 0 ? "profit" : quotedCost - actualCost < 0 ? "loss" : "break-even",
     });
 
     if (Number.isFinite(dueMs)) {
@@ -467,16 +502,34 @@ export async function GET(request: Request) {
     }))
     .sort((a, b) => b.completedCount - a.completedCount);
 
+  const sortedDetailedRows = [...detailedRows].sort((a, b) => {
+    const aId = Number.parseInt(String(a.request_number), 10);
+    const bId = Number.parseInt(String(b.request_number), 10);
+    const aKey = Number.isFinite(aId) ? aId : Number.MAX_SAFE_INTEGER;
+    const bKey = Number.isFinite(bId) ? bId : Number.MAX_SAFE_INTEGER;
+    if (aKey !== bKey) return aKey - bKey;
+    return Date.parse(a.completed_at) - Date.parse(b.completed_at);
+  });
+
   let csv = "";
 
-  if (format === "detail") {
-    csv += line(["Report", "Period", range.label]);
-    csv += line(["Date Range Start", range.startInput]);
-    csv += line(["Date Range End", range.endInput]);
-    csv += line([]);
-    csv += line([
+  if (format === "detail_xlsx") {
+    const totalProfitLoss = totalQuotedInternal - totalActualInternal;
+    const fileStamp = range.label.replace(/\s+/g, "_").replace(/[^A-Za-z0-9_-]/g, "");
+
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet("Detailed Report");
+
+    ws.addRow(["Report", "Period", range.label]);
+    ws.addRow(["Date Range Start", formatInputDate(range.startInput)]);
+    ws.addRow(["Date Range End", formatInputDate(range.endInput)]);
+    ws.addRow(["Total Quoted Cost", totalQuotedInternal]);
+    ws.addRow(["Profit/Loss Total", totalProfitLoss]);
+    ws.addRow(["Profit/Loss Status", totalProfitLoss > 0 ? "profit" : totalProfitLoss < 0 ? "loss" : "break-even"]);
+    ws.addRow([]);
+
+    const headers = [
       "Request ID",
-      "Request Number",
       "Customer",
       "Service",
       "Completed At",
@@ -485,19 +538,120 @@ export async function GET(request: Request) {
       "Quoted Hours",
       "Actual Hours",
       "Hour Variance",
-      "Quoted Internal",
-      "Actual Internal",
+      "Quoted Cost",
+      "Actual Cost",
       "Cost Variance",
-    ]);
+      "Profit/Loss",
+      "Profit/Loss Status",
+    ];
+    const headerRow = ws.addRow(headers);
+    headerRow.font = { bold: true };
 
-    for (const r of detailedRows.sort((a, b) => Date.parse(a.completed_at) - Date.parse(b.completed_at))) {
-      csv += line([
-        r.request_id,
+    ws.columns = [
+      { width: 24 },
+      { width: 24 },
+      { width: 18 },
+      { width: 18 },
+      { width: 18 },
+      { width: 8 },
+      { width: 13 },
+      { width: 13 },
+      { width: 13 },
+      { width: 13 },
+      { width: 13 },
+      { width: 13 },
+      { width: 13 },
+      { width: 16 },
+    ];
+
+    for (const r of sortedDetailedRows) {
+      const row = ws.addRow([
         r.request_number,
         r.customer_name,
         r.service_type,
-        r.completed_at,
-        r.due_at,
+        simpleDate(r.completed_at),
+        simpleDate(r.due_at),
+        r.late ? "yes" : "no",
+        r.quoted_hours,
+        r.actual_hours,
+        r.hour_variance,
+        r.quoted_internal,
+        r.actual_internal,
+        r.cost_variance,
+        r.profit_loss,
+        r.profit_loss_status,
+      ]);
+
+      row.getCell(1).numFmt = "@";
+      for (const col of [7, 8, 9, 10, 11, 12, 13]) {
+        row.getCell(col).numFmt = "0.00";
+      }
+
+      if (r.profit_loss > 0) {
+        row.getCell(13).font = { color: { argb: "FF166534" } };
+        row.getCell(14).font = { color: { argb: "FF166534" } };
+      } else if (r.profit_loss < 0) {
+        row.getCell(13).font = { color: { argb: "FFB91C1C" } };
+        row.getCell(14).font = { color: { argb: "FFB91C1C" } };
+      }
+    }
+
+    ws.getCell("B4").numFmt = "0.00";
+    ws.getCell("B5").numFmt = "0.00";
+    if (totalProfitLoss > 0) {
+      ws.getCell("B5").font = { color: { argb: "FF166534" }, bold: true };
+      ws.getCell("B6").font = { color: { argb: "FF166534" }, bold: true };
+    } else if (totalProfitLoss < 0) {
+      ws.getCell("B5").font = { color: { argb: "FFB91C1C" }, bold: true };
+      ws.getCell("B6").font = { color: { argb: "FFB91C1C" }, bold: true };
+    }
+
+    const excelBuffer = await workbook.xlsx.writeBuffer();
+    const bytes = excelBuffer instanceof ArrayBuffer ? new Uint8Array(excelBuffer) : new Uint8Array(excelBuffer as any);
+
+    return new NextResponse(bytes, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename=report_detailed_${fileStamp || "period"}.xlsx`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  if (format === "detail") {
+    const totalProfitLoss = totalQuotedInternal - totalActualInternal;
+    csv += line(["Report", "Period", range.label]);
+    csv += line(["Date Range Start", formatInputDate(range.startInput)]);
+    csv += line(["Date Range End", formatInputDate(range.endInput)]);
+    csv += line(["Total Quoted Cost", totalQuotedInternal.toFixed(2)]);
+    csv += line(["Profit/Loss Total", totalProfitLoss.toFixed(2)]);
+    csv += line(["Profit/Loss Status", totalProfitLoss > 0 ? "profit" : totalProfitLoss < 0 ? "loss" : "break-even"]);
+    csv += line([]);
+    csv += line([
+      "Request ID",
+      "Customer",
+      "Service",
+      "Completed At",
+      "Due At",
+      "Late",
+      "Quoted Hours",
+      "Actual Hours",
+      "Hour Variance",
+      "Quoted Cost",
+      "Actual Cost",
+      "Cost Variance",
+      "Profit/Loss",
+      "Profit/Loss Status",
+    ]);
+
+    for (const r of sortedDetailedRows) {
+      csv += line([
+        r.request_number,
+        r.customer_name,
+        r.service_type,
+        simpleDate(r.completed_at),
+        simpleDate(r.due_at),
         r.late ? "yes" : "no",
         r.quoted_hours.toFixed(2),
         r.actual_hours.toFixed(2),
@@ -505,6 +659,8 @@ export async function GET(request: Request) {
         r.quoted_internal.toFixed(2),
         r.actual_internal.toFixed(2),
         r.cost_variance.toFixed(2),
+        r.profit_loss.toFixed(2),
+        r.profit_loss_status,
       ]);
     }
 
@@ -521,8 +677,8 @@ export async function GET(request: Request) {
   }
 
   csv += line(["Report", "Period", range.label]);
-  csv += line(["Date Range Start", range.startInput]);
-  csv += line(["Date Range End", range.endInput]);
+  csv += line(["Date Range Start", formatInputDate(range.startInput)]);
+  csv += line(["Date Range End", formatInputDate(range.endInput)]);
   csv += line([]);
 
   csv += line(["KPI", "Value"]);

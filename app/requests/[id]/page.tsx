@@ -1,10 +1,40 @@
 import { createClient } from "@/app/lib/supabase/server";
 import AppShell from "@/app/components/AppShell";
 import { updateServiceStepStatus } from "@/app/actions";
+import { recalculateLeadTimesForOpenRequests } from "@/app/lib/lead-times";
 import { notFound, redirect } from "next/navigation";
 import ProgressUpdateToggle from "@/app/components/ProgressUpdateToggle";
 import LinkedQuoteSelector from "@/app/requests/LinkedQuoteSelector";
 import ConfirmSubmitButton from "@/app/requests/ConfirmSubmitButton";
+
+const PRINTER_STATUS_AVAILABLE = "Available";
+const PRINTER_STATUS_IN_USE = "In Use";
+const PRINTER_STATUS_MAINTENANCE = "Maintenance";
+const PRINTER_STATUS_OFFLINE = "Offline";
+
+function printerStatusCodeForLabel(status: string) {
+    const normalized = String(status ?? "").trim().toLowerCase();
+    if (normalized === "available") return 1;
+    if (normalized === "in use") return 2;
+    if (normalized === "maintenance") return 3;
+    if (normalized === "offline") return 4;
+    return 0;
+}
+
+function printerNameFromStatusKey(key: string) {
+    const raw = String(key ?? "");
+    if (raw.startsWith("printer_status:")) return raw.slice("printer_status:".length).trim();
+    if (raw.startsWith("printer_status__")) return raw.slice("printer_status__".length).replace(/_/g, " ").trim();
+    return "";
+}
+
+function printerAssignmentKey(name: string) {
+    return `printer_assignment:${String(name ?? "").trim()}`;
+}
+
+function printerStatusKey(name: string) {
+    return `printer_status:${String(name ?? "").trim()}`;
+}
 
 function toNum(v: any) {
     const n = Number(v);
@@ -51,6 +81,7 @@ export default async function RequestDetailPage({
       request_number,
       customer_name,
       created_at,
+    job_deadline,
       services_requested,
       overall_status,
       project_details,
@@ -158,26 +189,65 @@ export default async function RequestDetailPage({
 
     const stepIds = steps.map((s: any) => s.id).filter(Boolean);
 
-    const { data: actualRows, error: actualErr } = stepIds.length
+    let { data: actualRows, error: actualErr } = stepIds.length
         ? await supabase
             .from("service_actuals")
             .select("service_id, actual_hours, data, updated_at")
             .in("service_id", stepIds)
         : { data: null as any, error: null as any };
 
+    if (actualErr) throw new Error(actualErr.message);
+
+    const hasLeadData = steps
+        .filter((s: any) => s.step_status !== "Completed")
+        .some((s: any) => {
+            const row = (actualRows ?? []).find((r: any) => String(r.service_id) === String(s.id));
+            const dueAt = (row?.data as any)?.lead_time?.due_at;
+            const dueMs = dueAt ? Date.parse(String(dueAt)) : NaN;
+            return Number.isFinite(dueMs);
+        });
+
+    if (!hasLeadData && overallStatus !== "Completed") {
+        await recalculateLeadTimesForOpenRequests(supabase);
+
+        const refreshed = stepIds.length
+            ? await supabase
+                .from("service_actuals")
+                .select("service_id, actual_hours, data, updated_at")
+                .in("service_id", stepIds)
+            : { data: null as any, error: null as any };
+
+        if (refreshed.error) throw new Error(refreshed.error.message);
+        actualRows = refreshed.data;
+    }
+
     const actualByServiceId = new Map<string, any>(
         (actualRows ?? []).map((r: any) => [String(r.service_id), r])
     );
 
-    const totalLeadDueMs = steps
+    const dueMsForStep = (step: any) => {
+        const lead = (actualByServiceId.get(String(step.id))?.data as any)?.lead_time;
+        const dueMs = lead?.due_at ? Date.parse(String(lead.due_at)) : NaN;
+        return Number.isFinite(dueMs) ? dueMs : NaN;
+    };
+
+    const openStepDueDates = steps
         .filter((s: any) => s.step_status !== "Completed")
-        .map((s: any) => {
-            const lead = (actualByServiceId.get(String(s.id))?.data as any)?.lead_time;
-            const dueMs = lead?.due_at ? Date.parse(String(lead.due_at)) : NaN;
-            return Number.isFinite(dueMs) ? dueMs : NaN;
-        })
-        .filter((n: number) => Number.isFinite(n))
-        .reduce((max: number, cur: number) => (cur > max ? cur : max), Number.NaN);
+        .map(dueMsForStep)
+        .filter((n: number) => Number.isFinite(n));
+
+    const allStepDueDates = steps
+        .map(dueMsForStep)
+        .filter((n: number) => Number.isFinite(n));
+
+    const fallbackRequestDeadlineMs = Date.parse(String((request as any).job_deadline ?? ""));
+
+    const totalLeadDueMs =
+        openStepDueDates.length > 0
+            ? Math.max(...openStepDueDates)
+            : allStepDueDates.length > 0
+                ? Math.max(...allStepDueDates)
+                : (Number.isFinite(fallbackRequestDeadlineMs) ? fallbackRequestDeadlineMs : Number.NaN);
 
     const requestCreatedMs = Date.parse(String((request as any).created_at ?? ""));
     const totalLeadDays = Number.isFinite(totalLeadDueMs) && Number.isFinite(requestCreatedMs)
@@ -222,6 +292,53 @@ export default async function RequestDetailPage({
         if (!key) return "—";
         return materialNameById.get(key) ?? "Unknown material";
     }
+
+    const { data: printerConfigRows, error: printerCfgErr } = await supabase
+        .from("cost_settings")
+        .select("key,label,unit,value")
+        .or("key.like.printer_status:%,key.like.printer_status__%,key.like.printer_assignment:%,key.like.printer_assignment__%");
+
+    if (printerCfgErr) throw new Error(printerCfgErr.message);
+
+    const printerRows = (printerConfigRows ?? []) as Array<{ key: string; label?: string | null; unit?: string | null; value?: any }>;
+    const printerStatusRows = printerRows.filter((r) => String(r.key ?? "").startsWith("printer_status:"));
+    const printerAssignmentRows = printerRows.filter((r) => String(r.key ?? "").startsWith("printer_assignment:"));
+
+    const assignedRequestNumberByPrinter = new Map<string, string>();
+    const assignedRequestIdByPrinter = new Map<string, string>();
+
+    for (const row of printerAssignmentRows) {
+        const name = String(row.key).replace(/^printer_assignment:/, "").trim();
+        if (!name) continue;
+        const reqId = String(row.unit ?? "").trim();
+        const reqNum = Number(row.value);
+        if (reqId) assignedRequestIdByPrinter.set(name, reqId);
+        if (Number.isFinite(reqNum)) {
+            assignedRequestNumberByPrinter.set(name, String(Math.floor(reqNum)).padStart(5, "0"));
+        }
+    }
+
+    const targetStartStep = pausedStep ?? firstNotStarted;
+    const isContractPrintStart =
+        String(targetStartStep?.service_type ?? "") === "Contract Print" ||
+        String(targetStartStep?.service_type ?? "") === "Contract Printing";
+
+    const availableContractPrinters = printerStatusRows
+        .map((row) => {
+            const name = printerNameFromStatusKey(String(row.key ?? ""));
+            const status = String(row.unit ?? "").trim() || "Unknown";
+            const assignedRequestId = assignedRequestIdByPrinter.get(name) ?? "";
+            return {
+                name,
+                status,
+                assignedRequestId,
+                assignedRequestNumber: assignedRequestNumberByPrinter.get(name) ?? "",
+            };
+        })
+        .filter((p) => p.name.length > 0)
+        .filter((p) => p.status !== PRINTER_STATUS_MAINTENANCE && p.status !== PRINTER_STATUS_OFFLINE)
+        .filter((p) => p.status === PRINTER_STATUS_AVAILABLE || p.assignedRequestId === id)
+        .sort((a, b) => a.name.localeCompare(b.name));
 
     // ============================
     // Render
@@ -343,9 +460,58 @@ export default async function RequestDetailPage({
 
                                                                 if (!activeStep?.id) return;
 
+                                                                const isContractPrintActive =
+                                                                    String(activeStep?.service_type ?? "") === "Contract Print" ||
+                                                                    String(activeStep?.service_type ?? "") === "Contract Printing";
+
                                                                 await updateServiceStepStatus(activeStep.id, "Completed");
 
                                                                 const supabase = await createClient();
+
+                                                                if (isContractPrintActive) {
+                                                                    const { data: assignmentRows, error: assignErr } = await supabase
+                                                                        .from("cost_settings")
+                                                                        .select("key")
+                                                                        .eq("unit", id)
+                                                                        .like("key", "printer_assignment:%");
+
+                                                                    if (assignErr) throw new Error(assignErr.message);
+
+                                                                    for (const row of assignmentRows ?? []) {
+                                                                        const assignmentKey = String((row as any).key ?? "");
+                                                                        const printerName = assignmentKey.replace(/^printer_assignment:/, "").trim();
+                                                                        if (!printerName) continue;
+
+                                                                        const { data: statusRow } = await supabase
+                                                                            .from("cost_settings")
+                                                                            .select("label")
+                                                                            .eq("key", printerStatusKey(printerName))
+                                                                            .maybeSingle();
+
+                                                                        const { error: setAvailableErr } = await supabase
+                                                                            .from("cost_settings")
+                                                                            .upsert(
+                                                                                {
+                                                                                    key: printerStatusKey(printerName),
+                                                                                    label: (statusRow as any)?.label ?? `Printer: ${printerName}`,
+                                                                                    unit: PRINTER_STATUS_AVAILABLE,
+                                                                                    value: printerStatusCodeForLabel(PRINTER_STATUS_AVAILABLE),
+                                                                                },
+                                                                                { onConflict: "key" }
+                                                                            );
+
+                                                                        if (setAvailableErr) throw new Error(setAvailableErr.message);
+                                                                    }
+
+                                                                    const { error: clearAssignmentErr } = await supabase
+                                                                        .from("cost_settings")
+                                                                        .delete()
+                                                                        .eq("unit", id)
+                                                                        .like("key", "printer_assignment:%");
+
+                                                                    if (clearAssignmentErr) throw new Error(clearAssignmentErr.message);
+                                                                }
+
                                                                 const { data: remaining } = await supabase
                                                                     .from("request_services")
                                                                     .select("id")
@@ -384,33 +550,168 @@ export default async function RequestDetailPage({
                                                     />
                                                 </>
                                             ) : pausedStep || firstNotStarted ? (
-                                                <form
-                                                    action={async () => {
-                                                        "use server";
+                                                isContractPrintStart ? (
+                                                    <form
+                                                        action={async (formData: FormData) => {
+                                                            "use server";
 
-                                                        const target = pausedStep ?? firstNotStarted;
-                                                        if (!target?.id) return;
+                                                            const target = pausedStep ?? firstNotStarted;
+                                                            if (!target?.id) return;
 
-                                                        await updateServiceStepStatus(target.id, "In Progress");
+                                                            const selectedPrinterName = String(formData.get("printer_name") ?? "").trim();
+                                                            if (!selectedPrinterName) {
+                                                                redirect(`/requests/${id}?err=${encodeURIComponent("Select a printer to start Contract Print.")}`);
+                                                            }
 
-                                                        const supabase = await createClient();
-                                                        const { error } = await supabase
-                                                            .from("requests")
-                                                            .update({ overall_status: "In Progress" })
-                                                            .eq("id", id);
+                                                            const supabase = await createClient();
 
-                                                        if (error) throw new Error(error.message);
+                                                            const { data: printerRows, error: printerErr } = await supabase
+                                                                .from("cost_settings")
+                                                                .select("key,unit,value")
+                                                                .or("key.like.printer_status:%,key.like.printer_assignment:%");
 
-                                                        redirect(`/requests/${id}`);
-                                                    }}
-                                                >
-                                                    <button
-                                                        type="submit"
-                                                        className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-500"
+                                                            if (printerErr) throw new Error(printerErr.message);
+
+                                                            const rows = (printerRows ?? []) as Array<{ key: string; unit?: string | null; value?: any }>;
+                                                            const statusRows = rows.filter((r) => String(r.key).startsWith("printer_status:"));
+                                                            const assignmentRows = rows.filter((r) => String(r.key).startsWith("printer_assignment:"));
+
+                                                            const printerStatusRow = statusRows.find(
+                                                                (r) => String(r.key) === printerStatusKey(selectedPrinterName)
+                                                            );
+
+                                                            if (!printerStatusRow) {
+                                                                redirect(`/requests/${id}?err=${encodeURIComponent("Selected printer no longer exists.")}`);
+                                                            }
+
+                                                            const currentStatus = String(printerStatusRow.unit ?? "").trim() || "Unknown";
+                                                            if (currentStatus === PRINTER_STATUS_OFFLINE || currentStatus === PRINTER_STATUS_MAINTENANCE) {
+                                                                redirect(`/requests/${id}?err=${encodeURIComponent("Selected printer is unavailable.")}`);
+                                                            }
+
+                                                            const existingAssignment = assignmentRows.find(
+                                                                (r) => String(r.key) === printerAssignmentKey(selectedPrinterName)
+                                                            );
+                                                            const assignedRequestId = String(existingAssignment?.unit ?? "").trim();
+
+                                                            if (assignedRequestId && assignedRequestId !== id) {
+                                                                redirect(`/requests/${id}?err=${encodeURIComponent("Selected printer is already in use by another request.")}`);
+                                                            }
+
+                                                            const requestNumberNumeric = Number((request as any).request_number ?? 0);
+                                                            const requestNumberValue = Number.isFinite(requestNumberNumeric)
+                                                                ? Math.floor(requestNumberNumeric)
+                                                                : 0;
+
+                                                            const { error: clearAssignmentsErr } = await supabase
+                                                                .from("cost_settings")
+                                                                .delete()
+                                                                .eq("unit", id)
+                                                                .like("key", "printer_assignment:%");
+
+                                                            if (clearAssignmentsErr) throw new Error(clearAssignmentsErr.message);
+
+                                                            const { error: setPrinterErr } = await supabase
+                                                                .from("cost_settings")
+                                                                .upsert(
+                                                                    {
+                                                                        key: printerStatusKey(selectedPrinterName),
+                                                                        label: (printerStatusRow as any)?.label ?? `Printer: ${selectedPrinterName}`,
+                                                                        unit: PRINTER_STATUS_IN_USE,
+                                                                        value: printerStatusCodeForLabel(PRINTER_STATUS_IN_USE),
+                                                                    },
+                                                                    { onConflict: "key" }
+                                                                );
+
+                                                            if (setPrinterErr) throw new Error(setPrinterErr.message);
+
+                                                            const { error: assignmentErr } = await supabase
+                                                                .from("cost_settings")
+                                                                .upsert(
+                                                                    {
+                                                                        key: printerAssignmentKey(selectedPrinterName),
+                                                                        label: `Printer assignment for ${selectedPrinterName}`,
+                                                                        unit: id,
+                                                                        value: requestNumberValue,
+                                                                    },
+                                                                    { onConflict: "key" }
+                                                                );
+
+                                                            if (assignmentErr) throw new Error(assignmentErr.message);
+
+                                                            await updateServiceStepStatus(target.id, "In Progress");
+
+                                                            const { error } = await supabase
+                                                                .from("requests")
+                                                                .update({ overall_status: "In Progress" })
+                                                                .eq("id", id);
+
+                                                            if (error) throw new Error(error.message);
+
+                                                            redirect(`/requests/${id}`);
+                                                        }}
+                                                        className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"
                                                     >
-                                                        {pausedStep ? `Resume ${pausedStep.service_type}` : `Start ${firstNotStarted!.service_type}`}
-                                                    </button>
-                                                </form>
+                                                        <select
+                                                            name="printer_name"
+                                                            required
+                                                            defaultValue={availableContractPrinters[0]?.name ?? ""}
+                                                            className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100"
+                                                        >
+                                                            {availableContractPrinters.length === 0 ? (
+                                                                <option value="">No available printers</option>
+                                                            ) : (
+                                                                availableContractPrinters.map((printer) => (
+                                                                    <option key={printer.name} value={printer.name}>
+                                                                        {printer.name}
+                                                                    </option>
+                                                                ))
+                                                            )}
+                                                        </select>
+
+                                                        <button
+                                                            type="submit"
+                                                            disabled={availableContractPrinters.length === 0}
+                                                            className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                                        >
+                                                            {pausedStep ? `Resume ${pausedStep.service_type}` : `Start ${firstNotStarted!.service_type}`}
+                                                        </button>
+
+                                                        {availableContractPrinters.length === 0 ? (
+                                                            <div className="sm:col-span-2 text-xs text-amber-300">
+                                                                No Contract Print printers are currently available.
+                                                            </div>
+                                                        ) : null}
+                                                    </form>
+                                                ) : (
+                                                    <form
+                                                        action={async () => {
+                                                            "use server";
+
+                                                            const target = pausedStep ?? firstNotStarted;
+                                                            if (!target?.id) return;
+
+                                                            await updateServiceStepStatus(target.id, "In Progress");
+
+                                                            const supabase = await createClient();
+                                                            const { error } = await supabase
+                                                                .from("requests")
+                                                                .update({ overall_status: "In Progress" })
+                                                                .eq("id", id);
+
+                                                            if (error) throw new Error(error.message);
+
+                                                            redirect(`/requests/${id}`);
+                                                        }}
+                                                    >
+                                                        <button
+                                                            type="submit"
+                                                            className="inline-flex h-10 items-center justify-center rounded-md bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-500"
+                                                        >
+                                                            {pausedStep ? `Resume ${pausedStep.service_type}` : `Start ${firstNotStarted!.service_type}`}
+                                                        </button>
+                                                    </form>
+                                                )
                                             ) : null}
                                         </>
                                     ) : null}
@@ -419,9 +720,8 @@ export default async function RequestDetailPage({
                                         <div>
                                             Total lead deadline:{" "}
                                             {Number.isFinite(totalLeadDueMs)
-                                                ? new Date(totalLeadDueMs).toLocaleString(undefined, {
+                                                ? new Date(totalLeadDueMs).toLocaleDateString(undefined, {
                                                     dateStyle: "medium",
-                                                    timeStyle: "short",
                                                 })
                                                 : "—"}
                                         </div>
@@ -446,9 +746,8 @@ export default async function RequestDetailPage({
                                                         return Number.isFinite(dueMs) ? (
                                                             <div className="mt-1 text-xs text-neutral-400">
                                                                 Lead: {Number.isFinite(leadDays) ? `${leadDays}d` : "—"} • Due{" "}
-                                                                {new Date(dueMs).toLocaleString(undefined, {
+                                                                {new Date(dueMs).toLocaleDateString(undefined, {
                                                                     dateStyle: "medium",
-                                                                    timeStyle: "short",
                                                                 })}
                                                             </div>
                                                         ) : null;

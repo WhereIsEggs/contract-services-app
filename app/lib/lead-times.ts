@@ -40,6 +40,27 @@ function clampMin(value: number, min: number) {
   return value < min ? min : value;
 }
 
+function printerStatusFromRow(row: any): string {
+  const fromUnit = String(row?.unit ?? "").trim();
+  if (fromUnit) return fromUnit;
+
+  const numeric = Number(row?.value);
+  if (Number.isFinite(numeric)) {
+    if (numeric === 1) return "Available";
+    if (numeric === 2) return "In Use";
+    if (numeric === 3) return "Maintenance";
+    if (numeric === 4) return "Offline";
+  }
+
+  const fromValue = String(row?.value ?? "").trim();
+  return fromValue;
+}
+
+function isPrinterContributingCapacity(status: string) {
+  const s = String(status ?? "").trim().toLowerCase();
+  return s === "available" || s === "in use" || s === "busy" || s === "printing" || s === "idle";
+}
+
 function serviceSuffixFromLabel(serviceLabel: string): "contract_print" | "scanning" | "design" | "testing" {
   const t = normalizeServiceQueueKey(serviceLabel);
   if (t === "Contract Print") return "contract_print";
@@ -94,12 +115,30 @@ async function loadLeadTimeConfig(supabase: any): Promise<LeadTimeConfig> {
 
   if (error) throw new Error(error.message);
 
+  const { data: printerRows, error: printerErr } = await supabase
+    .from("cost_settings")
+    .select("key,unit,value")
+    .or("key.like.printer_status:%,key.like.printer_status__%");
+
+  if (printerErr) throw new Error(printerErr.message);
+
   const byKey = new Map<string, number>((rows ?? []).map((r: any) => [String(r.key), toNum(r.value)]));
 
   const setting = (key: string, min: number) => {
     const raw = byKey.has(key) ? Number(byKey.get(key)) : getDefaultSettingValue(key);
     return clampMin(raw, min);
   };
+
+  const configuredContractPrintConcurrency = Math.floor(setting("lead_time_concurrency_contract_print", 1));
+  const printerStatusRows = (printerRows ?? []) as Array<{ key: string; unit: string | null; value: any }>;
+  const hasPrinterConfig = printerStatusRows.length > 0;
+  const contributingPrinterCount = printerStatusRows
+    .map((row) => printerStatusFromRow(row))
+    .filter((status) => isPrinterContributingCapacity(status)).length;
+
+  const contractPrintConcurrency = hasPrinterConfig
+    ? Math.max(1, Math.min(configuredContractPrintConcurrency, Math.max(0, contributingPrinterCount)))
+    : configuredContractPrintConcurrency;
 
   return {
     hoursThreshold: setting("lead_time_hours_threshold", 1),
@@ -117,7 +156,7 @@ async function loadLeadTimeConfig(supabase: any): Promise<LeadTimeConfig> {
     },
 
     concurrencyByService: {
-      contract_print: Math.floor(setting("lead_time_concurrency_contract_print", 1)),
+      contract_print: contractPrintConcurrency,
       scanning: Math.floor(setting("lead_time_concurrency_scanning", 1)),
       design: Math.floor(setting("lead_time_concurrency_design", 1)),
       testing: Math.floor(setting("lead_time_concurrency_testing", 1)),

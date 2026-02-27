@@ -9,11 +9,13 @@ export default function AppShell({
     children,
     hideHeaderTitle = false,
     activeNav,
+    tone = "default",
 }: {
     title: string;
     children: React.ReactNode;
     hideHeaderTitle?: boolean;
-    activeNav?: "dashboard" | "new_request" | "requests" | "in_progress" | "completed" | "late" | "quote_tool" | "costs" | "reports";
+    activeNav?: "dashboard" | "new_request" | "requests" | "in_progress" | "completed" | "late" | "quote_tool" | "costs" | "reports" | "printers";
+    tone?: "default" | "soft";
 }) {
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -49,12 +51,21 @@ export default function AppShell({
 
     const onRequestsFinal = navOverride ? navOverride === "requests" : onRequests;
 
+    const isSoft = tone === "soft";
+    const rootClass = isSoft ? "min-h-dvh bg-neutral-900 text-neutral-100" : "min-h-dvh bg-neutral-950 text-neutral-100";
+    const sidebarClass = isSoft
+        ? "hidden md:block border-r border-neutral-700 bg-neutral-900/70"
+        : "hidden md:block border-r border-neutral-800 bg-neutral-950/60";
+    const headerClass = isSoft
+        ? "border-b border-neutral-700 bg-neutral-900/70"
+        : "border-b border-neutral-800 bg-neutral-950/60";
+
 
     return (
-        <div className="min-h-dvh bg-neutral-950 text-neutral-100">
+        <div className={rootClass}>
             <div className="grid md:grid-cols-[260px_1fr]">
                 {/* Sidebar */}
-                <aside className="hidden md:block border-r border-neutral-800 bg-neutral-950/60">
+            <aside className={sidebarClass}>
                     <div className="h-dvh sticky top-0 p-4 flex flex-col gap-6">
                         <div>
                             <div className="mt-1 text-lg font-semibold">Contract Services</div>
@@ -179,7 +190,7 @@ export default function AppShell({
 
                 {/* Main */}
                 <div className="min-w-0">
-                    <header className="border-b border-neutral-800 bg-neutral-950/60">
+                    <header className={headerClass}>
                         <div className="mx-auto max-w-[1100px] px-6 py-4 flex items-center justify-between gap-4">
                             {!hideHeaderTitle && (
                                 <h1 className="text-base md:text-lg font-semibold truncate">

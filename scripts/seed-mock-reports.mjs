@@ -1,11 +1,48 @@
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_URL_RAW = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const RESET = process.argv.includes("--reset");
+const MOCK_USER_ID = String(process.env.MOCK_USER_ID ?? "").trim();
+const MOCK_USER_EMAIL = String(process.env.MOCK_USER_EMAIL ?? "").trim().toLowerCase();
+
+function normalizeUrl(raw) {
+  return String(raw ?? "").trim().replace(/\/+$/, "");
+}
+
+function validateSupabaseUrl(url) {
+  if (!url) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL is missing.");
+  }
+
+  if (!/^https:\/\//i.test(url)) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL must start with https://");
+  }
+
+  const lower = url.toLowerCase();
+
+  if (
+    lower.includes("/dashboard") ||
+    lower.includes("supabase.com/dashboard") ||
+    lower.includes("studio")
+  ) {
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL appears to be a Supabase Studio/dashboard URL. Use the Project API URL (https://<project-ref>.supabase.co), not the dashboard URL."
+    );
+  }
+}
+
+const SUPABASE_URL = normalizeUrl(SUPABASE_URL_RAW);
 
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   console.error("Missing env vars. Required: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY");
+  process.exit(1);
+}
+
+try {
+  validateSupabaseUrl(SUPABASE_URL);
+} catch (e) {
+  console.error(e.message || e);
   process.exit(1);
 }
 
@@ -15,7 +52,7 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const SERVICE_LABELS = ["3D Scanning", "3D Design", "Contract Print", "Material Testing"];
+const SERVICE_LABELS = ["3D Scanning", "3D Design", "Contract Print"];
 
 function toNum(v, fallback = 0) {
   const n = Number(v);
@@ -82,6 +119,28 @@ async function loadMaterialIds() {
   return (data ?? []).map((m) => String(m.id));
 }
 
+async function resolveMockOwnerId() {
+  if (MOCK_USER_ID) return MOCK_USER_ID;
+
+  const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
+  if (error) throw new Error(`Unable to list users for mock seeding: ${error.message}`);
+
+  const users = data?.users ?? [];
+  if (!users.length) {
+    throw new Error("No auth users found. Create at least one user account, then run the seed again.");
+  }
+
+  if (MOCK_USER_EMAIL) {
+    const byEmail = users.find((u) => String(u.email ?? "").toLowerCase() === MOCK_USER_EMAIL);
+    if (!byEmail) {
+      throw new Error(`MOCK_USER_EMAIL '${MOCK_USER_EMAIL}' was not found in auth users.`);
+    }
+    return String(byEmail.id);
+  }
+
+  return String(users[0].id);
+}
+
 async function cleanupMocks() {
   const { data: reqRows, error: reqErr } = await supabase
     .from("requests")
@@ -125,7 +184,7 @@ async function cleanupMocks() {
   }
 }
 
-async function insertRequest({ customerName, createdAt, services, overallStatus }) {
+async function insertRequest({ customerName, createdAt, services, overallStatus, createdBy }) {
   const statusByService = {
     scan_status: services.includes("3D Scanning")
       ? overallStatus === "Completed"
@@ -158,6 +217,7 @@ async function insertRequest({ customerName, createdAt, services, overallStatus 
       services_requested: services,
       overall_status: overallStatus,
       created_at: createdAt,
+      created_by: createdBy,
       ...statusByService,
     })
     .select("id, request_number")
@@ -257,6 +317,9 @@ function plannedHoursForService(serviceLabel, quoteItem) {
 async function seed() {
   const rates = await loadCostSettings();
   const materialIds = await loadMaterialIds();
+  const createdBy = await resolveMockOwnerId();
+
+  console.log(`Using created_by user: ${createdBy}`);
 
   if (RESET) {
     console.log("Cleaning old mock records...");
@@ -305,6 +368,7 @@ async function seed() {
       createdAt,
       services,
       overallStatus: scenario.overall,
+      createdBy,
     });
 
     const requestId = String(req.id);
@@ -469,6 +533,16 @@ seed()
     process.exit(0);
   })
   .catch((err) => {
-    console.error("Mock seed failed:", err.message || err);
+    const msg = String(err?.message ?? err ?? "Unknown error");
+
+    if (msg.includes("<!DOCTYPE html>") || msg.includes("<html")) {
+      console.error(
+        "Mock seed failed: Received HTML instead of Supabase API JSON. This usually means NEXT_PUBLIC_SUPABASE_URL is set to a dashboard/studio URL."
+      );
+      console.error("Use: https://<project-ref>.supabase.co");
+      process.exit(1);
+    }
+
+    console.error("Mock seed failed:", msg);
     process.exit(1);
   });

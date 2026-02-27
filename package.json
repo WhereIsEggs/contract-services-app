@@ -6,11 +6,14 @@
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed:mock": "node scripts/seed-mock-reports.mjs",
+    "seed:mock:reset": "node scripts/seed-mock-reports.mjs --reset"
   },
   "dependencies": {
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.93.1",
+    "exceljs": "^4.4.0",
     "next": "16.1.5",
     "react": "19.2.3",
     "react-dom": "19.2.3"

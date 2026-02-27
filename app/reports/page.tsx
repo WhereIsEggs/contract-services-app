@@ -1,6 +1,7 @@
 import AppShell from "@/app/components/AppShell";
 import { createClient } from "@/app/lib/supabase/server";
 import { quoteKeyForServiceLabel } from "@/app/lib/lead-times";
+import ReportFilters from "@/app/reports/ReportFilters";
 import { redirect } from "next/navigation";
 
 type ReportsSearchParams = {
@@ -18,7 +19,7 @@ type DateRange = {
   startInput: string;
   endInput: string;
   label: string;
-  period: "quarter" | "semi" | "annual" | "custom";
+  period: "quarter" | "semi_first" | "semi_second" | "annual" | "custom";
   year: number;
   quarter: number;
   half: number;
@@ -48,6 +49,13 @@ function ymd(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
+function mdy(d: Date) {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${m}/${day}/${y}`;
+}
+
 function parseYmdUtc(raw: string | undefined) {
   const s = String(raw ?? "").trim();
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -68,13 +76,17 @@ function resolveDateRange(sp?: ReportsSearchParams): DateRange {
 
   const rawPeriod = String(sp?.period ?? "quarter").toLowerCase();
   const period: DateRange["period"] =
-    rawPeriod === "semi" || rawPeriod === "annual" || rawPeriod === "custom"
-      ? (rawPeriod as any)
-      : "quarter";
+    rawPeriod === "semi"
+      ? Number(sp?.half ?? "") === 2
+        ? "semi_second"
+        : "semi_first"
+      : rawPeriod === "semi_first" || rawPeriod === "semi_second" || rawPeriod === "annual" || rawPeriod === "custom"
+        ? (rawPeriod as DateRange["period"])
+        : "quarter";
 
   const year = Math.max(2020, Number(sp?.year ?? String(currentYear)) || currentYear);
   const quarter = Math.min(4, Math.max(1, Number(sp?.quarter ?? String(currentQuarter)) || currentQuarter));
-  const half = Math.min(2, Math.max(1, Number(sp?.half ?? String(currentHalf)) || currentHalf));
+  const half = period === "semi_second" ? 2 : period === "semi_first" ? 1 : Math.min(2, Math.max(1, Number(sp?.half ?? String(currentHalf)) || currentHalf));
 
   if (period === "custom") {
     const parsedStart = parseYmdUtc(sp?.start);
@@ -87,7 +99,7 @@ function resolveDateRange(sp?: ReportsSearchParams): DateRange {
         endIso: endExclusive.toISOString(),
         startInput: ymd(parsedStart),
         endInput: ymd(parsedEnd),
-        label: `${ymd(parsedStart)} to ${ymd(parsedEnd)}`,
+        label: `${mdy(parsedStart)} to ${mdy(parsedEnd)}`,
         period,
         year,
         quarter,
@@ -112,9 +124,10 @@ function resolveDateRange(sp?: ReportsSearchParams): DateRange {
     };
   }
 
-  if (period === "semi") {
-    const startMonth = half === 1 ? 0 : 6;
-    const endMonth = half === 1 ? 6 : 12;
+  if (period === "semi_first" || period === "semi_second") {
+    const isFirstHalf = period === "semi_first";
+    const startMonth = isFirstHalf ? 0 : 6;
+    const endMonth = isFirstHalf ? 6 : 12;
     const start = new Date(Date.UTC(year, startMonth, 1));
     const endExclusive = new Date(Date.UTC(year, endMonth, 1));
     return {
@@ -122,7 +135,7 @@ function resolveDateRange(sp?: ReportsSearchParams): DateRange {
       endIso: endExclusive.toISOString(),
       startInput: ymd(start),
       endInput: ymd(new Date(endExclusive.getTime() - 24 * 60 * 60 * 1000)),
-      label: `H${half} ${year}`,
+      label: isFirstHalf ? `Semi-Annual Jan-Jun ${year}` : `Semi-Annual Jul-Dec ${year}`,
       period,
       year,
       quarter,
@@ -242,6 +255,10 @@ export default async function ReportsPage({
   const exportDetailHref = `/reports/export?${new URLSearchParams({
     ...Object.fromEntries(exportParams.entries()),
     format: "detail",
+  }).toString()}`;
+  const exportDetailExcelHref = `/reports/export?${new URLSearchParams({
+    ...Object.fromEntries(exportParams.entries()),
+    format: "detail_xlsx",
   }).toString()}`;
 
   const { data: settingsRows } = await supabase.from("cost_settings").select("key,value");
@@ -429,6 +446,7 @@ export default async function ReportsPage({
   const completedRequestIdsInPeriod = new Set(completedSteps.map((s) => String(s.request_id)));
 
   const lateCompletionRate = servicesWithDue > 0 ? lateCompletedServices / servicesWithDue : 0;
+  const profitLossTotal = totalQuotedInternal - totalActualInternal;
 
   const serviceRows = Array.from(byService.entries())
     .map(([service, v]) => ({
@@ -461,57 +479,22 @@ export default async function ReportsPage({
             >
               Export Detailed CSV
             </a>
+            <a
+              href={exportDetailExcelHref}
+              className="inline-flex h-9 items-center justify-center rounded-md border border-neutral-700 bg-neutral-900 px-3 text-xs text-neutral-100 hover:bg-neutral-800"
+            >
+              Export Detailed Excel
+            </a>
           </div>
         </div>
 
-        <form action="/reports" method="get" className="rounded-xl border border-neutral-800 bg-neutral-950/40 p-4 grid gap-3 md:grid-cols-6">
-          <label className="grid gap-1 md:col-span-2">
-            <span className="text-xs text-neutral-400">Period</span>
-            <select name="period" defaultValue={range.period} className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100">
-              <option value="quarter">Quarter</option>
-              <option value="semi">Semi-Annual</option>
-              <option value="annual">Annual</option>
-              <option value="custom">Custom</option>
-            </select>
-          </label>
-
-          <label className="grid gap-1">
-            <span className="text-xs text-neutral-400">Year</span>
-            <input name="year" type="number" defaultValue={range.year} className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100" />
-          </label>
-
-          <label className="grid gap-1">
-            <span className="text-xs text-neutral-400">Quarter</span>
-            <select name="quarter" defaultValue={String(range.quarter)} className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100">
-              <option value="1">Q1</option>
-              <option value="2">Q2</option>
-              <option value="3">Q3</option>
-              <option value="4">Q4</option>
-            </select>
-          </label>
-
-          <label className="grid gap-1">
-            <span className="text-xs text-neutral-400">Half</span>
-            <select name="half" defaultValue={String(range.half)} className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100">
-              <option value="1">H1</option>
-              <option value="2">H2</option>
-            </select>
-          </label>
-
-          <button type="submit" className="h-10 rounded-md border border-neutral-700 bg-neutral-900 px-4 text-sm font-medium text-neutral-100 hover:bg-neutral-800 md:self-end">
-            Run report
-          </button>
-
-          <label className="grid gap-1 md:col-span-2">
-            <span className="text-xs text-neutral-400">Custom start</span>
-            <input name="start" type="date" defaultValue={range.startInput} className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100" />
-          </label>
-
-          <label className="grid gap-1 md:col-span-2">
-            <span className="text-xs text-neutral-400">Custom end</span>
-            <input name="end" type="date" defaultValue={range.endInput} className="h-10 rounded-md border border-neutral-800 bg-neutral-950 px-3 text-sm text-neutral-100" />
-          </label>
-        </form>
+        <ReportFilters
+          period={range.period}
+          year={range.year}
+          quarter={range.quarter}
+          startInput={range.startInput}
+          endInput={range.endInput}
+        />
 
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-4">
@@ -547,9 +530,9 @@ export default async function ReportsPage({
           </div>
 
           <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-4">
-            <div className="text-xs text-neutral-400">Internal Cost Variance</div>
-            <div className={`mt-1 text-xl font-semibold ${(totalActualInternal - totalQuotedInternal) > 0 ? "text-red-300" : "text-emerald-300"}`}>
-              {fmtMoney(totalActualInternal - totalQuotedInternal)}
+            <div className="text-xs text-neutral-400">Profit/Loss Total</div>
+            <div className={`mt-1 text-xl font-semibold ${profitLossTotal < 0 ? "text-red-300" : "text-emerald-300"}`}>
+              {fmtMoney(profitLossTotal)}
             </div>
           </div>
 
@@ -564,18 +547,18 @@ export default async function ReportsPage({
           <p className="mt-1 text-sm text-neutral-400">Completed services in selected period.</p>
 
           <div className="mt-3 overflow-x-auto rounded-xl border border-neutral-800">
-            <table className="w-full text-sm">
+            <table className="min-w-[980px] w-full text-sm">
               <thead className="bg-neutral-950/60 text-left text-neutral-300">
                 <tr className="border-b border-neutral-800">
-                  <th className="px-3 py-2">Service</th>
-                  <th className="px-3 py-2">Completed</th>
-                  <th className="px-3 py-2">Late %</th>
-                  <th className="px-3 py-2">Quoted Hrs</th>
-                  <th className="px-3 py-2">Actual Hrs</th>
-                  <th className="px-3 py-2">Hour Var</th>
-                  <th className="px-3 py-2">Quoted Internal</th>
-                  <th className="px-3 py-2">Actual Internal</th>
-                  <th className="px-3 py-2">Cost Var</th>
+                  <th className="px-3 py-2 whitespace-nowrap">Service</th>
+                  <th className="px-3 py-2 whitespace-nowrap">Completed</th>
+                  <th className="px-3 py-2 whitespace-nowrap">Late %</th>
+                  <th className="px-3 py-2 whitespace-nowrap">Quoted Hrs</th>
+                  <th className="px-3 py-2 whitespace-nowrap">Actual Hrs</th>
+                  <th className="px-3 py-2 whitespace-nowrap">Hour Var</th>
+                  <th className="px-3 py-2 whitespace-nowrap">Quoted Cost</th>
+                  <th className="px-3 py-2 whitespace-nowrap">Actual Cost</th>
+                  <th className="px-3 py-2 whitespace-nowrap">Cost Var</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-800 bg-neutral-950/30">
@@ -586,15 +569,15 @@ export default async function ReportsPage({
                 ) : (
                   serviceRows.map((r) => (
                     <tr key={r.service}>
-                      <td className="px-3 py-2 text-neutral-200">{r.service}</td>
-                      <td className="px-3 py-2 text-neutral-200">{r.completedCount}</td>
-                      <td className="px-3 py-2 text-neutral-200">{fmtPct(r.lateRate)}</td>
-                      <td className="px-3 py-2 text-neutral-200">{fmtHours(r.quotedHours)}</td>
-                      <td className="px-3 py-2 text-neutral-200">{fmtHours(r.actualHours)}</td>
-                      <td className={`px-3 py-2 ${r.hourVariance > 0 ? "text-red-300" : "text-emerald-300"}`}>{fmtHours(r.hourVariance)}</td>
-                      <td className="px-3 py-2 text-neutral-200">{fmtMoney(r.quotedCost)}</td>
-                      <td className="px-3 py-2 text-neutral-200">{fmtMoney(r.actualCost)}</td>
-                      <td className={`px-3 py-2 ${r.costVariance > 0 ? "text-red-300" : "text-emerald-300"}`}>{fmtMoney(r.costVariance)}</td>
+                      <td className="px-3 py-2 text-neutral-200 whitespace-nowrap">{r.service}</td>
+                      <td className="px-3 py-2 text-neutral-200 whitespace-nowrap">{r.completedCount}</td>
+                      <td className="px-3 py-2 text-neutral-200 whitespace-nowrap">{fmtPct(r.lateRate)}</td>
+                      <td className="px-3 py-2 text-neutral-200 whitespace-nowrap">{fmtHours(r.quotedHours)}</td>
+                      <td className="px-3 py-2 text-neutral-200 whitespace-nowrap">{fmtHours(r.actualHours)}</td>
+                      <td className={`px-3 py-2 whitespace-nowrap ${r.hourVariance > 0 ? "text-red-300" : "text-emerald-300"}`}>{fmtHours(r.hourVariance)}</td>
+                      <td className="px-3 py-2 text-neutral-200 whitespace-nowrap">{fmtMoney(r.quotedCost)}</td>
+                      <td className="px-3 py-2 text-neutral-200 whitespace-nowrap">{fmtMoney(r.actualCost)}</td>
+                      <td className={`px-3 py-2 whitespace-nowrap ${r.costVariance > 0 ? "text-red-300" : "text-emerald-300"}`}>{fmtMoney(r.costVariance)}</td>
                     </tr>
                   ))
                 )}

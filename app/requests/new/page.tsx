@@ -20,8 +20,8 @@ export default async function NewRequestPage({
     }
 
     return (
-        <AppShell title="New Request" hideHeaderTitle>
-            <div className="bg-neutral-900 rounded-lg shadow-lg p-6">
+        <AppShell title="New Request" hideHeaderTitle tone="soft">
+            <div className="rounded-lg border border-neutral-700 bg-neutral-900/50 p-6">
                 <div className="mb-6">
                     <h2 className="text-2xl font-semibold text-neutral-100">New Request</h2>
                     <p className="mt-2 text-sm text-neutral-400">
@@ -29,7 +29,7 @@ export default async function NewRequestPage({
                     </p>
                 </div>
 
-                <hr className="my-6 border-neutral-800" />
+                <hr className="my-6 border-neutral-700" />
 
                 <NewRequestFormClient action={createRequestAction} />
             </div>

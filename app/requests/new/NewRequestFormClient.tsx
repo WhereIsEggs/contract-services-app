@@ -42,7 +42,7 @@ export default function NewRequestFormClient({
                 const fd = new FormData(e.currentTarget);
                 startTransition(() => formAction(fd));
             }}
-            className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900/60 p-6 shadow-sm grid gap-5"
+            className="mt-6 grid gap-5 rounded-xl border border-neutral-700 bg-neutral-900/50 p-6"
         >
             {hasErrors ? (
                 <div className="rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-200">
@@ -64,11 +64,11 @@ export default function NewRequestFormClient({
                     placeholder="Acme Corp"
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
-                    className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
             </div>
 
-            <fieldset className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-4">
+            <fieldset className="rounded-lg border border-neutral-700 bg-neutral-900/50 p-4">
                 <legend className="px-1 text-sm font-medium text-neutral-200">Services Requested</legend>
 
                 <div className="mt-3 grid gap-2">
@@ -78,7 +78,7 @@ export default function NewRequestFormClient({
                             name="svc_scan"
                             checked={svcScan}
                             onChange={(e) => setSvcScan(e.target.checked)}
-                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-950"
+                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-900"
                         />
                         3D Scanning
                     </label>
@@ -89,7 +89,7 @@ export default function NewRequestFormClient({
                             name="svc_design"
                             checked={svcDesign}
                             onChange={(e) => setSvcDesign(e.target.checked)}
-                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-950"
+                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-900"
                         />
                         3D Design
                     </label>
@@ -100,7 +100,7 @@ export default function NewRequestFormClient({
                             name="svc_print"
                             checked={svcPrint}
                             onChange={(e) => setSvcPrint(e.target.checked)}
-                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-950"
+                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-900"
                         />
                         Contract Print
                     </label>
@@ -117,14 +117,14 @@ export default function NewRequestFormClient({
                     rows={5}
                     value={projectDetails}
                     onChange={(e) => setProjectDetails(e.target.value)}
-                    className="w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2.5 text-sm text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
             </div>
 
             <button
                 type="submit"
                 disabled={isPending}
-                className="mt-4 inline-flex items-center justify-center rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-neutral-900 transition disabled:opacity-60"
+                className="mt-4 inline-flex items-center justify-center rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-neutral-800 transition disabled:opacity-60"
             >
                 Submit Request
             </button>
